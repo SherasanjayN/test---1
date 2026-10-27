@@ -1,6 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLanguage } from '../utils/translations';
 import {
+  getInsecureContextMessage,
+  getSpeechRecognitionErrorMessage,
+  useOnDeviceSpeechRecognition,
+} from '../utils/speechRecognition';
+import {
   Mic,
   MicOff,
   Volume2,
@@ -24,7 +29,7 @@ export interface VoiceValidationResult {
 interface VoiceInputModalProps {
   isOpen: boolean;
   onClose: () => void;
-  fieldName: 'amount' | 'phone' | 'purpose' | 'name' | 'area';
+  fieldName: 'amount' | 'investmentAmount' | 'phone' | 'purpose' | 'name' | 'area';
   fieldLabel: string;
   onApplyValue: (value: string | number) => void;
   onOpenAiTech?: () => void;
@@ -33,6 +38,19 @@ interface VoiceInputModalProps {
 // Tamil number word mappings to integers
 const TAMIL_NUMBERS: Record<string, number> = {
   'ஆயிரம்': 1000,
+  'பத்து': 10,
+  'பதினொன்று': 11,
+  'பன்னிரண்டு': 12,
+  'பதிமூன்று': 13,
+  'பதினான்கு': 14,
+  'பதினைந்து': 15,
+  'பதினாறு': 16,
+  'பதினேழு': 17,
+  'பதினெட்டு': 18,
+  'பத்தொன்பது': 19,
+  'இருபது': 20,
+  'ஐயாயிரம்': 5000,
+  'பத்தாயிரம்': 10000,
   'ஒன்றாயிரம்': 1000,
   'இரண்டாயிரம்': 2000,
   'ரெண்டாயிரம்': 2000,
@@ -44,7 +62,6 @@ const TAMIL_NUMBERS: Record<string, number> = {
   'ஏழாயிரம்': 7000,
   'எட்டாயிரம்': 8000,
   'ஒன்பதாயிரம்': 9000,
-  'பத்தாயிரம்': 10000,
   'நூறு': 100,
   'ஐநூறு': 500,
 };
@@ -65,20 +82,21 @@ const ENGLISH_NUMBERS: Record<string, number> = {
 
 // Hybrid speech-to-field validator
 export function validateVoiceInput(
-  fieldName: 'amount' | 'phone' | 'purpose' | 'name' | 'area',
+  fieldName: 'amount' | 'investmentAmount' | 'phone' | 'purpose' | 'name' | 'area',
   rawTranscript: string,
   lang: 'en' | 'ta'
 ): VoiceValidationResult {
-  const clean = rawTranscript.trim().toLowerCase();
+  const tamilDigits = rawTranscript.replace(/[௦-௯]/g, digit => String('௦௧௨௩௪௫௬௭௮௯'.indexOf(digit)));
+  const clean = tamilDigits.trim().toLowerCase();
 
-  if (fieldName === 'amount') {
+  if (fieldName === 'amount' || fieldName === 'investmentAmount') {
     // 1. Semantic Check: If user says "loan", "kadan", "help", "money" without any number, actively halt!
     const semanticNonNumericWords = ['loan', 'kadan', 'கடன்', 'money', 'help', 'cash', 'please', 'application'];
     const hasOnlySemanticWords = semanticNonNumericWords.some((w) => clean.includes(w)) && !/\d+/.test(clean);
 
     // Check Tamil words
     let matchedTamilAmount: number | null = null;
-    for (const [tWord, val] of Object.entries(TAMIL_NUMBERS)) {
+    for (const [tWord, val] of Object.entries(TAMIL_NUMBERS).sort(([left], [right]) => right.length - left.length)) {
       if (rawTranscript.includes(tWord)) {
         matchedTamilAmount = val;
         break;
@@ -96,9 +114,9 @@ export function validateVoiceInput(
 
     // Direct number regex (e.g. 5000, 8000, 5k)
     let directNum: number | null = null;
-    const directMatch = clean.match(/(\d+)\s*(k|thousand)?/);
+    const directMatch = clean.replace(/,/g, '').match(/(\d+(?:\.\d{1,2})?)\s*(k|thousand)?/);
     if (directMatch) {
-      let num = parseInt(directMatch[1], 10);
+      let num = parseFloat(directMatch[1]);
       if (directMatch[2] === 'k' || directMatch[2] === 'thousand') {
         num = num * 1000;
       }
@@ -109,25 +127,27 @@ export function validateVoiceInput(
 
     if (detectedAmount !== null) {
       // Rule Engine: Check statutory cap
-      if (detectedAmount > 10000) {
+      const maximum = fieldName === 'investmentAmount' ? 1000000 : 10000;
+      const minimum = fieldName === 'investmentAmount' ? 1 : 500;
+      if (detectedAmount > maximum) {
         return {
           isValid: false,
           rawTranscript,
           errorMessage:
             lang === 'ta'
-              ? `கண்டறியப்பட்ட தொகை ₹${detectedAmount.toLocaleString('en-IN')}, ஆனால் மகளிர் குழு விதிமுறைப்படி அதிகபட்ச வரம்பு ₹10,000 ஆகும்.`
-              : `Detected ₹${detectedAmount.toLocaleString('en-IN')}, but maximum allowable loan is capped strictly at ₹10,000 per Magalir Kuzhu rules.`,
+              ? `கண்டறியப்பட்ட தொகை ₹${detectedAmount.toLocaleString('en-IN')}, அனுமதிக்கப்பட்ட அதிகபட்சம் ₹${maximum.toLocaleString('en-IN')} ஆகும்.`
+              : `Detected ₹${detectedAmount.toLocaleString('en-IN')}, but the maximum allowed amount is ₹${maximum.toLocaleString('en-IN')}.`,
         };
       }
 
-      if (detectedAmount < 500) {
+      if (detectedAmount < minimum) {
         return {
           isValid: false,
           rawTranscript,
           errorMessage:
             lang === 'ta'
-              ? 'குறைந்தபட்ச கடன் தொகை ₹500 ஆகும்.'
-              : 'Minimum allowable micro-credit loan is ₹500.',
+              ? `குறைந்தபட்ச தொகை ₹${minimum} ஆகும்.`
+              : `The minimum amount is ₹${minimum}.`,
         };
       }
 
@@ -158,9 +178,20 @@ export function validateVoiceInput(
   }
 
   if (fieldName === 'phone') {
-    // Extract digits
-    const digits = clean.replace(/\D/g, '');
-    if (digits.length === 10) {
+    const tamilPhoneDigits: Record<string, string> = {
+      'பூஜ்ஜியம்': '0', 'சுழியம்': '0', 'ஒன்று': '1', 'ஒரு': '1', 'இரண்டு': '2', 'ரெண்டு': '2',
+      'மூன்று': '3', 'நான்கு': '4', 'ஐந்து': '5', 'ஆறு': '6', 'ஏழு': '7', 'எட்டு': '8', 'ஒன்பது': '9',
+    };
+    const englishPhoneDigits: Record<string, string> = {
+      zero: '0', oh: '0', one: '1', two: '2', three: '3', four: '4', five: '5',
+      six: '6', seven: '7', eight: '8', nine: '9',
+    };
+    let spokenDigits = clean;
+    for (const [word, digit] of Object.entries(tamilPhoneDigits)) spokenDigits = spokenDigits.replaceAll(word, digit);
+    for (const [word, digit] of Object.entries(englishPhoneDigits)) spokenDigits = spokenDigits.replace(new RegExp(`\\b${word}\\b`, 'g'), digit);
+    let digits = spokenDigits.replace(/\D/g, '');
+    if (digits.length === 12 && digits.startsWith('91')) digits = digits.slice(2);
+    if (/^[6-9]\d{9}$/.test(digits)) {
       return {
         isValid: true,
         rawTranscript,
@@ -173,12 +204,27 @@ export function validateVoiceInput(
       rawTranscript,
       errorMessage:
         lang === 'ta'
-          ? `கண்டறியப்பட்ட எண்கள்: ${digits.length}. அலைபேசி எண் சரியாக 10 இலக்கங்களாக இருக்க வேண்டும்.`
-          : `Detected ${digits.length} digits. Mobile phone number must be exactly 10 digits.`,
+          ? 'சரியான 10 இலக்க இந்திய கைபேசி எண்ணை தெளிவாக கூறவும்.'
+          : `Detected ${digits.length} digits. Enter a valid 10-digit Indian mobile number starting with 6–9.`,
     };
   }
 
-  // Text fields (purpose, name, area)
+  if (fieldName === 'name') {
+    const name = rawTranscript.trim();
+    const letterCount = Array.from(name).filter(character => /\p{L}/u.test(character)).length;
+    if (letterCount >= 3 && /^[\p{L}\p{M}][\p{L}\p{M}\s.'’-]*$/u.test(name)) {
+      return { isValid: true, rawTranscript, parsedValue: name, displayText: name };
+    }
+    return {
+      isValid: false,
+      rawTranscript,
+      errorMessage: lang === 'ta'
+        ? 'பெயரில் குறைந்தது 3 எழுத்துகள் இருக்க வேண்டும்; எண்கள் அனுமதிக்கப்படாது.'
+        : 'Enter a name with at least 3 letters and no digits.',
+    };
+  }
+
+  // Text fields (purpose, area)
   if (clean.length >= 3) {
     return {
       isValid: true,
@@ -212,6 +258,7 @@ export const VoiceInputModal: React.FC<VoiceInputModalProps> = ({
   const [validationResult, setValidationResult] = useState<VoiceValidationResult | null>(null);
   const [speechLanguage, setSpeechLanguage] = useState<'en-IN' | 'ta-IN'>(language === 'ta' ? 'ta-IN' : 'en-IN');
   const [browserSupport, setBrowserSupport] = useState(true);
+  const [recognitionError, setRecognitionError] = useState<string | null>(null);
   const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
@@ -227,9 +274,15 @@ export const VoiceInputModal: React.FC<VoiceInputModalProps> = ({
     }
   }, []);
 
-  const handleStartListening = () => {
+  const handleStartListening = async () => {
     setValidationResult(null);
     setTranscript('');
+    setRecognitionError(null);
+
+    if (!window.isSecureContext) {
+      setRecognitionError(getInsecureContextMessage(language));
+      return;
+    }
 
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
@@ -242,6 +295,7 @@ export const VoiceInputModal: React.FC<VoiceInputModalProps> = ({
       recognition.lang = speechLanguage;
       recognition.continuous = false;
       recognition.interimResults = true;
+      await useOnDeviceSpeechRecognition(recognition, SpeechRecognition, speechLanguage);
 
       recognition.onstart = () => {
         setIsListening(true);
@@ -257,6 +311,7 @@ export const VoiceInputModal: React.FC<VoiceInputModalProps> = ({
       recognition.onerror = (event: any) => {
         console.error('Speech recognition error', event.error);
         setIsListening(false);
+        setRecognitionError(getSpeechRecognitionErrorMessage(event, language));
       };
 
       recognition.onend = () => {
@@ -268,6 +323,7 @@ export const VoiceInputModal: React.FC<VoiceInputModalProps> = ({
     } catch (err) {
       console.error('Failed to start speech recognition', err);
       setIsListening(false);
+      setRecognitionError(getSpeechRecognitionErrorMessage(err, language));
     }
   };
 
@@ -382,7 +438,7 @@ export const VoiceInputModal: React.FC<VoiceInputModalProps> = ({
                 : 'Click microphone to speak'}
             </p>
             <p className="text-xs text-slate-500 mt-0.5">
-              {fieldName === 'amount'
+              {fieldName === 'amount' || fieldName === 'investmentAmount'
                 ? language === 'ta'
                   ? 'எ.கா: "ஐந்தாயிரம்" அல்லது "5000 ரூபாய்"'
                   : 'e.g. "five thousand" or "5000"'
@@ -394,6 +450,17 @@ export const VoiceInputModal: React.FC<VoiceInputModalProps> = ({
         </div>
 
         {/* Live Audio Transcript */}
+        {!browserSupport && (
+          <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+            {language === 'ta' ? 'இந்த உலாவியில் குரல் உள்ளீடு ஆதரிக்கப்படவில்லை. மற்றொரு உலாவியை முயற்சிக்கவும்.' : 'Voice input is not supported in this browser. Try a supported browser.'}
+          </p>
+        )}
+        {recognitionError && (
+          <div role="alert" className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <p>{recognitionError}</p>
+          </div>
+        )}
         {transcript && (
           <div className="p-3.5 bg-slate-100 rounded-xl border border-slate-200">
             <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">

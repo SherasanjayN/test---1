@@ -121,6 +121,25 @@ router.post('/:id/reject', authenticate, requireRole('SUPER_ADMIN'), (req: AuthR
   });
 });
 
+// POST /api/users/:id/remove - Super Admin only; preserves financial records.
+router.post('/:id/remove', authenticate, requireRole('SUPER_ADMIN'), (req: AuthRequest, res) => {
+  const user = db.findUserById(req.params.id);
+  if (!user || user.status === 'REMOVED') {
+    res.status(404).json({ error: 'Active user not found.' });
+    return;
+  }
+  if (user.role === 'SUPER_ADMIN') {
+    res.status(400).json({ error: 'A Super Admin account cannot be removed here.' });
+    return;
+  }
+  const updated = db.removeUserFromActiveAccess(user.id, req.user!);
+  if (!updated) {
+    res.status(409).json({ error: 'User access could not be removed.' });
+    return;
+  }
+  res.json({ message: `${user.name} was removed from active access. Their financial history is retained.`, user: sanitizeUser(updated) });
+});
+
 // POST /api/users/:id/allocate-group - Super Admin only
 router.post('/:id/allocate-group', authenticate, requireRole('SUPER_ADMIN'), (req: AuthRequest, res) => {
   const user = db.findUserById(req.params.id);

@@ -4,11 +4,11 @@ import {
   Loan,
   Message,
   Announcement,
-  EmailLog,
   SosAlert,
   MeetingRecord,
-  SmtpStatusResponse,
-  SmtpConfigInfo,
+  Notification,
+  RepaymentTransaction,
+  RepaymentInstallment,
 } from './types';
 
 let currentToken: string | null = localStorage.getItem('mk_token');
@@ -110,6 +110,9 @@ export const api = {
       body: JSON.stringify({ role }),
     }),
 
+  removeUser: (id: string) =>
+    request<{ message: string; user: User }>(`/api/users/${id}/remove`, { method: 'POST' }),
+
   // Groups
   getGroups: () =>
     request<Group[]>('/api/groups'),
@@ -161,12 +164,27 @@ export const api = {
       amount: number;
       payment_mode: 'UPI' | 'CASH';
       note?: string;
+      idempotency_key: string;
     }
   ) =>
-    request<{ message: string; loan: Loan }>(`/api/loans/${loanId}/repay`, {
+    request<{ message: string; loan: Loan; repayment: RepaymentTransaction; duplicate: boolean }>(`/api/loans/${loanId}/repay`, {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+
+  getLoanLedger: (loanId: string) =>
+    request<{
+      loan_id: string;
+      user_name: string;
+      amount: number;
+      frequency: 'WEEKLY' | 'MONTHLY';
+      total_paid: number;
+      remaining_balance: number;
+      next_due_date?: string;
+      installments: RepaymentInstallment[];
+      repayments: RepaymentTransaction[];
+      audit_log: Array<Record<string, unknown>>;
+    }>(`/api/loans/${loanId}/ledger`),
 
   groupApproveLoan: (id: string, note?: string) =>
     request<{ message: string; loan: Loan }>(`/api/loans/${id}/group-approve`, {
@@ -204,6 +222,33 @@ export const api = {
       body: JSON.stringify({ text }),
     }),
 
+  updateMessage: (groupId: string, messageId: string, text: string) =>
+    request<Message>(`/api/groups/${groupId}/messages/${messageId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ text }),
+    }),
+
+  deleteMessage: (groupId: string, messageId: string) =>
+    request<Message>(`/api/groups/${groupId}/messages/${messageId}`, {
+      method: 'DELETE',
+    }),
+
+  getNotifications: () =>
+    request<{ notifications: Notification[]; unread_count: number }>('/api/notifications'),
+
+  markNotificationRead: (id: string) =>
+    request<Notification>(`/api/notifications/${id}/read`, { method: 'PATCH' }),
+
+  askSheAi: (
+    message: string,
+    language: 'en' | 'ta',
+    history: Array<{ role: 'user' | 'assistant'; text: string }>
+  ) =>
+    request<{ answer: string }>('/api/ai/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message, language, history }),
+    }),
+
   // Announcements
   getAnnouncements: () =>
     request<Announcement[]>('/api/announcements'),
@@ -214,38 +259,27 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  // Emails audit & SMTP configuration
-  getEmails: () =>
-    request<EmailLog[]>('/api/emails'),
+  // Private member investments and audience-scoped in-app admin messages
+  getInvestments: () =>
+    request<import('./types').Investment[]>('/api/investments'),
 
-  getSmtpConfig: () =>
-    request<SmtpStatusResponse>('/api/emails/smtp-config'),
-
-  saveSmtpConfig: (body: Partial<SmtpConfigInfo> & { pass?: string }) =>
-    request<{
-      message: string;
-      verified: boolean;
-      verification_message?: string;
-      verification_error?: string;
-      config: SmtpConfigInfo;
-    }>('/api/emails/smtp-config', {
+  createInvestment: (body: { amount_per_period: number; frequency: import('./types').InvestmentFrequency; started_at?: string; note?: string }) =>
+    request<import('./types').Investment>('/api/investments', {
       method: 'POST',
       body: JSON.stringify(body),
     }),
 
-  verifySmtp: (body?: Partial<SmtpConfigInfo> & { pass?: string }) =>
-    request<{ success: boolean; message: string; error?: string }>('/api/emails/verify-smtp', {
+  addInvestmentContribution: (investmentId: string, body: { amount: number; payment_mode: 'CASH' | 'UPI'; note?: string }) =>
+    request<import('./types').InvestmentContribution>(`/api/investments/${investmentId}/contributions`, {
       method: 'POST',
-      body: JSON.stringify(body || {}),
+      body: JSON.stringify(body),
     }),
 
-  resetSmtpToSandbox: () =>
-    request<{ message: string; active_mode: string }>('/api/emails/reset-smtp', {
-      method: 'POST',
-    }),
+  getAdminMessages: () =>
+    request<import('./types').AdminMessage[]>('/api/admin-messages'),
 
-  sendTestEmail: (body: { to?: string; userName?: string; amount?: number }) =>
-    request<{ message: string; log: EmailLog; delivery_mode: string }>('/api/emails/test', {
+  createAdminMessage: (body: { title: string; message: string; audience: 'ALL' | 'GROUP' | 'SELECTED'; group_id?: string; user_ids?: string[] }) =>
+    request<import('./types').AdminMessage>('/api/admin-messages', {
       method: 'POST',
       body: JSON.stringify(body),
     }),

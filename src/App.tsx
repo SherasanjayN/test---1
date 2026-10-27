@@ -6,6 +6,8 @@ import { PendingScreen } from './components/PendingScreen';
 import { MemberDashboard } from './components/MemberDashboard';
 import { GroupAdminPanel } from './components/GroupAdminPanel';
 import { SuperAdminDashboard } from './components/SuperAdminDashboard';
+import { SheAiAssistant } from './components/SheAiAssistant';
+import { NotificationCenter } from './components/NotificationCenter';
 import { LanguageProvider, useLanguage } from './utils/translations';
 import { Users, Loader2 } from 'lucide-react';
 
@@ -33,7 +35,7 @@ const AppContent: React.FC = () => {
   }
 
   // Authenticated but registration is PENDING or REJECTED
-  if (user.status === 'PENDING' || user.status === 'REJECTED') {
+  if (user.status === 'PENDING' || user.status === 'REJECTED' || user.status === 'REMOVED') {
     return (
       <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col">
         <Header />
@@ -47,6 +49,10 @@ const AppContent: React.FC = () => {
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col selection:bg-emerald-600 selection:text-white">
       <Header />
       <main className="flex-1 pb-10">
+        <SheAiAssistant />
+        <div className="mx-auto flex max-w-7xl justify-end px-4 py-2 sm:px-6 lg:px-8">
+          <NotificationCenter />
+        </div>
         {user.role === 'SUPER_ADMIN' && <SuperAdminDashboard />}
         {user.role === 'GROUP_ADMIN' && <GroupAdminPanel />}
         {user.role === 'USER' && <MemberDashboard />}

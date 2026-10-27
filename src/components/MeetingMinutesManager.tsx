@@ -15,7 +15,9 @@ import {
   Printer,
   X,
   CheckCircle2,
+  Mic,
 } from 'lucide-react';
+import { VoiceInputModal } from './VoiceInputModal';
 
 interface MeetingMinutesManagerProps {
   groupId: string;
@@ -43,6 +45,7 @@ export const MeetingMinutesManager: React.FC<MeetingMinutesManagerProps> = ({
   const [resolutions, setResolutions] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [voiceField, setVoiceField] = useState<'topic' | 'savings' | 'resolutions' | null>(null);
 
   const fetchMeetings = async () => {
     try {
@@ -305,15 +308,18 @@ export const MeetingMinutesManager: React.FC<MeetingMinutesManagerProps> = ({
                   <label className="block font-bold text-slate-700 mb-1">
                     {t.totalSavingsCollected} <span className="text-rose-500">*</span>
                   </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="100"
-                    required
-                    value={savingsCollected}
-                    onChange={(e) => setSavingsCollected(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-slate-900"
-                  />
+                  <span className="flex gap-2">
+                    <input
+                      type="number"
+                      min="0"
+                      step="100"
+                      required
+                      value={savingsCollected}
+                      onChange={(e) => setSavingsCollected(e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-slate-900"
+                    />
+                    <button type="button" onClick={() => setVoiceField('savings')} aria-label="Enter savings amount by voice" className="rounded-xl border border-slate-300 px-3 text-emerald-700"><Mic className="h-4 w-4" /></button>
+                  </span>
                 </div>
               </div>
 
@@ -321,14 +327,17 @@ export const MeetingMinutesManager: React.FC<MeetingMinutesManagerProps> = ({
                 <label className="block font-bold text-slate-700 mb-1">
                   {t.meetingTopic} <span className="text-rose-500">*</span>
                 </label>
-                <input
-                  type="text"
-                  required
-                  value={topic}
-                  onChange={(e) => setTopic(e.target.value)}
-                  placeholder="e.g. Weekly micro-savings deposit & loan review"
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-slate-900"
-                />
+                <span className="flex gap-2">
+                  <input
+                    type="text"
+                    required
+                    value={topic}
+                    onChange={(e) => setTopic(e.target.value)}
+                    placeholder="e.g. Weekly micro-savings deposit & loan review"
+                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-slate-900"
+                  />
+                  <button type="button" onClick={() => setVoiceField('topic')} aria-label="Enter meeting topic by voice" className="rounded-xl border border-slate-300 px-3 text-emerald-700"><Mic className="h-4 w-4" /></button>
+                </span>
               </div>
 
               {/* Attendance Table */}
@@ -391,13 +400,16 @@ export const MeetingMinutesManager: React.FC<MeetingMinutesManagerProps> = ({
                 <label className="block font-bold text-slate-700 mb-1">
                   {t.resolutionsNotes}
                 </label>
-                <textarea
-                  rows={3}
-                  value={resolutions}
-                  onChange={(e) => setResolutions(e.target.value)}
-                  placeholder={t.resolutionsPlaceholder}
-                  className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-slate-900"
-                />
+                <span className="flex gap-2">
+                  <textarea
+                    rows={3}
+                    value={resolutions}
+                    onChange={(e) => setResolutions(e.target.value)}
+                    placeholder={t.resolutionsPlaceholder}
+                    className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-slate-900"
+                  />
+                  <button type="button" onClick={() => setVoiceField('resolutions')} aria-label="Enter resolutions by voice" className="self-start rounded-xl border border-slate-300 px-3 py-3 text-emerald-700"><Mic className="h-4 w-4" /></button>
+                </span>
               </div>
 
               <div className="flex space-x-2 pt-2">
@@ -420,6 +432,17 @@ export const MeetingMinutesManager: React.FC<MeetingMinutesManagerProps> = ({
           </div>
         </div>
       )}
+      <VoiceInputModal
+        isOpen={voiceField !== null}
+        onClose={() => setVoiceField(null)}
+        fieldName={voiceField === 'savings' ? 'investmentAmount' : 'purpose'}
+        fieldLabel={voiceField === 'savings' ? t.totalSavingsCollected : voiceField === 'topic' ? t.meetingTopic : t.resolutionsNotes}
+        onApplyValue={value => {
+          if (voiceField === 'savings') setSavingsCollected(String(value));
+          else if (voiceField === 'topic') setTopic(String(value));
+          else if (voiceField === 'resolutions') setResolutions(String(value));
+        }}
+      />
     </div>
   );
 };

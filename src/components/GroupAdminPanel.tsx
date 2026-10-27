@@ -9,6 +9,8 @@ import { AnnouncementsFeed } from './AnnouncementsFeed';
 import { MeetingMinutesManager } from './MeetingMinutesManager';
 import { SosAlertBanner } from './SosAlertBanner';
 import { RepaymentLedger } from './RepaymentLedger';
+import { AdminMessageCenter } from './AdminMessageCenter';
+import { LoanEmiCalculator } from './LoanEmiCalculator';
 import {
   ShieldCheck,
   CreditCard,
@@ -26,12 +28,14 @@ import {
   Calendar,
   BookOpen,
   Download,
+  Home,
+  Send,
 } from 'lucide-react';
 
 export const GroupAdminPanel: React.FC = () => {
   const { user, group } = useAuth();
   const { t, language } = useLanguage();
-  const [activeTab, setActiveTab] = useState<'loans' | 'ledgers' | 'members' | 'mom' | 'chat' | 'announcements'>('loans');
+  const [activeTab, setActiveTab] = useState<'home' | 'loans' | 'calculator' | 'ledgers' | 'members' | 'mom' | 'chat' | 'announcements' | 'messages'>('home');
   const [loans, setLoans] = useState<Loan[]>([]);
   const [members, setMembers] = useState<User[]>([]);
   const [loading, setLoading] = useState(false);
@@ -95,6 +99,14 @@ export const GroupAdminPanel: React.FC = () => {
   // Filter loans
   const pendingReview = loans.filter((l) => l.status === 'PENDING_GROUP_ADMIN');
   const otherLoans = loans.filter((l) => l.status !== 'PENDING_GROUP_ADMIN');
+  const weekStart = new Date();
+  weekStart.setHours(0, 0, 0, 0);
+  weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
+  const weeklyCollection = loans.reduce((total, loan) =>
+    total + (loan.installments || []).reduce((sum, installment) => {
+      if (!installment.paid_date || new Date(installment.paid_date) < weekStart || installment.paid_amount <= 0) return sum;
+      return sum + installment.paid_amount;
+    }, 0), 0);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
@@ -156,6 +168,9 @@ export const GroupAdminPanel: React.FC = () => {
 
       {/* Tabs */}
       <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-2">
+        <button onClick={() => setActiveTab('home')} className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold ${activeTab === 'home' ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-emerald-50'}`}>
+          <Home className="h-4 w-4" />{language === 'ta' ? 'முகப்பு' : 'Home'}
+        </button>
         <button
           onClick={() => setActiveTab('loans')}
           className={`flex items-center space-x-2 px-4 py-2 text-xs font-bold rounded-xl transition-all ${
@@ -171,6 +186,10 @@ export const GroupAdminPanel: React.FC = () => {
               {pendingReview.length}
             </span>
           )}
+        </button>
+
+        <button onClick={() => setActiveTab('calculator')} className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold ${activeTab === 'calculator' ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-emerald-50'}`}>
+          <CreditCard className="h-4 w-4" />{t.loanCalculator}
         </button>
 
         <button
@@ -237,7 +256,32 @@ export const GroupAdminPanel: React.FC = () => {
           <Bell className="w-4 h-4" />
           <span>{t.noticeboard}</span>
         </button>
+
+        <button onClick={() => setActiveTab('messages')} className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold ${activeTab === 'messages' ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-emerald-50'}`}>
+          <Send className="h-4 w-4" />{language === 'ta' ? 'நிர்வாக செய்திகள்' : 'Admin messages'}
+        </button>
       </div>
+
+      {activeTab === 'home' && (
+        <section className="grid gap-4 md:grid-cols-3">
+          <article className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
+            <p className="text-xs font-semibold text-amber-800">{language === 'ta' ? 'மதிப்பாய்வு நிலுவையில்' : 'Awaiting your review'}</p>
+            <p className="mt-2 text-2xl font-extrabold text-amber-950">{pendingReview.length}</p>
+            <button onClick={() => setActiveTab('loans')} className="mt-3 text-xs font-bold text-amber-900 hover:underline">{language === 'ta' ? 'கடன் கோரிக்கைகளைப் பார்க்க' : 'Review loan requests'}</button>
+          </article>
+          <article className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
+            <p className="text-xs font-semibold text-emerald-800">{language === 'ta' ? 'இந்த வார வசூல்' : 'This week’s collections'}</p>
+            <p className="mt-2 text-2xl font-extrabold text-emerald-950">₹{weeklyCollection.toLocaleString('en-IN')}</p>
+            <button onClick={() => setActiveTab('ledgers')} className="mt-3 text-xs font-bold text-emerald-900 hover:underline">{language === 'ta' ? 'வசூல் பதிவுகளைப் பார்க்க' : 'Open collection ledgers'}</button>
+          </article>
+          <article className="rounded-2xl border border-slate-200 bg-white p-5">
+            <p className="text-xs font-semibold text-slate-500">{language === 'ta' ? 'செயலில் உள்ள உறுப்பினர்கள்' : 'Active group members'}</p>
+            <p className="mt-2 text-2xl font-extrabold text-slate-900">{members.length}</p>
+            <button onClick={() => setActiveTab('members')} className="mt-3 text-xs font-bold text-emerald-700 hover:underline">{language === 'ta' ? 'உறுப்பினர் பட்டியல்' : 'Open member directory'}</button>
+          </article>
+        </section>
+      )}
+      {activeTab === 'calculator' && <LoanEmiCalculator />}
 
       {/* Tab: Loans Review Queue */}
       {activeTab === 'loans' && (
@@ -549,6 +593,7 @@ export const GroupAdminPanel: React.FC = () => {
 
       {/* Tab: Announcements */}
       {activeTab === 'announcements' && <AnnouncementsFeed />}
+      {activeTab === 'messages' && user && <AdminMessageCenter user={user} groupId={group?.id} />}
     </div>
   );
 };

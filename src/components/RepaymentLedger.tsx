@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Loan, RepaymentInstallment } from '../types';
+import React, { useEffect, useRef, useState } from 'react';
+import { Loan, RepaymentInstallment, RepaymentTransaction } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../utils/translations';
 import { api } from '../api';
@@ -40,13 +40,34 @@ export const RepaymentLedger: React.FC<RepaymentLedgerProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [repayments, setRepayments] = useState<RepaymentTransaction[]>(loan.repayments || []);
+  const [ledgerError, setLedgerError] = useState<string | null>(null);
+  const idempotencyKeyRef = useRef<string | null>(null);
 
   const totalPaid = loan.total_paid || 0;
   const remaining = loan.remaining_balance !== undefined ? loan.remaining_balance : loan.amount;
   const installments = loan.installments || [];
+  const allowPaymentRecording = canRecordPayment && loan.status === 'APPROVED' && remaining > 0;
+
+  useEffect(() => {
+    let active = true;
+    api.getLoanLedger(loan.id)
+      .then(ledger => {
+        if (!active) return;
+        setRepayments(ledger.repayments);
+        setLedgerError(null);
+      })
+      .catch(error => {
+        if (active) setLedgerError(error instanceof Error ? error.message : 'Failed to load repayment history.');
+      });
+    return () => {
+      active = false;
+    };
+  }, [loan.id, loan.total_paid, loan.status]);
 
   const handleOpenRecord = (inst: RepaymentInstallment) => {
     setRecordingInstallment(inst);
+    idempotencyKeyRef.current = null;
     const defaultNeeded = Math.max(0, inst.due_amount - (inst.paid_amount || 0));
     setPayAmount(defaultNeeded > 0 ? defaultNeeded.toString() : inst.due_amount.toString());
     setPayNote('');
@@ -67,14 +88,22 @@ export const RepaymentLedger: React.FC<RepaymentLedgerProps> = ({
     try {
       setIsSubmitting(true);
       setErrorMessage(null);
+      if (!idempotencyKeyRef.current) {
+        idempotencyKeyRef.current = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `repayment-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      }
 
       const res = await api.recordLoanRepayment(loan.id, {
         installment_number: recordingInstallment.installment_number,
         amount: numAmount,
         payment_mode: payMode,
         note: payNote.trim(),
+        idempotency_key: idempotencyKeyRef.current,
       });
 
+      idempotencyKeyRef.current = null;
+      setRepayments(current => [...current.filter(item => item.id !== res.repayment.id), res.repayment]);
       setSuccessMessage(res.message);
       if (onLoanUpdated) {
         onLoanUpdated(res.loan);
@@ -198,7 +227,7 @@ export const RepaymentLedger: React.FC<RepaymentLedgerProps> = ({
               <th className="px-3 py-2.5 text-left">{language === 'ta' ? 'செலுத்தப்பட்டது' : 'Paid Amount'}</th>
               <th className="px-3 py-2.5 text-left">{language === 'ta' ? 'நிலை' : 'Status'}</th>
               <th className="px-3 py-2.5 text-left">{language === 'ta' ? 'செலுத்திய தேதி / முறை' : 'Paid Date / Mode'}</th>
-              {canRecordPayment && (
+              {allowPaymentRecording && (
                 <th className="px-3 py-2.5 text-right">{language === 'ta' ? 'செயல்பாடு' : 'Action'}</th>
               )}
             </tr>
@@ -206,7 +235,7 @@ export const RepaymentLedger: React.FC<RepaymentLedgerProps> = ({
           <tbody className="divide-y divide-slate-100 bg-white">
             {installments.length === 0 ? (
               <tr>
-                <td colSpan={canRecordPayment ? 7 : 6} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={allowPaymentRecording ? 7 : 6} className="px-4 py-6 text-center text-slate-400">
                   {language === 'ta' ? 'தவணை பட்டியல் தயார் செய்யப்படுகிறது...' : 'Generating installment schedule...'}
                 </td>
               </tr>
@@ -263,7 +292,7 @@ export const RepaymentLedger: React.FC<RepaymentLedgerProps> = ({
                         '-'
                       )}
                     </td>
-                    {canRecordPayment && (
+                    {allowPaymentRecording && (
                       <td className="px-3 py-2.5 text-right">
                         {!isPaid && (
                           <button
@@ -284,6 +313,47 @@ export const RepaymentLedger: React.FC<RepaymentLedgerProps> = ({
           </tbody>
         </table>
       </div>
+
+      <section className="overflow-hidden rounded-xl border border-slate-200">
+        <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
+          <h4 className="text-xs font-bold text-slate-800">
+            {language === 'ta' ? 'பரிவர்த்தனை வரலாறு' : 'Repayment Transaction History'}
+          </h4>
+        </div>
+        {ledgerError && <p role="alert" className="px-4 py-2 text-xs text-rose-700">{ledgerError}</p>}
+        {repayments.length === 0 ? (
+          <p className="px-4 py-5 text-center text-xs text-slate-500">
+            {language === 'ta' ? 'இதுவரை எந்த கட்டணமும் பதிவு செய்யப்படவில்லை.' : 'No repayments have been recorded yet.'}
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-slate-200 text-xs">
+              <thead className="bg-white text-left text-slate-600">
+                <tr>
+                  <th className="px-3 py-2">Date</th>
+                  <th className="px-3 py-2">Cycle</th>
+                  <th className="px-3 py-2">Amount</th>
+                  <th className="px-3 py-2">Mode</th>
+                  <th className="px-3 py-2">Recorded by</th>
+                  <th className="px-3 py-2">Balance after payment</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {[...repayments].sort((a, b) => b.payment_date.localeCompare(a.payment_date)).map(payment => (
+                  <tr key={payment.id}>
+                    <td className="whitespace-nowrap px-3 py-2 text-slate-600">{new Date(payment.payment_date).toLocaleString()}</td>
+                    <td className="px-3 py-2 text-slate-600">#{payment.installment_number}</td>
+                    <td className="whitespace-nowrap px-3 py-2 font-semibold text-emerald-700">₹{payment.amount.toLocaleString('en-IN')}</td>
+                    <td className="px-3 py-2 text-slate-600">{payment.payment_mode}</td>
+                    <td className="px-3 py-2 text-slate-600">{payment.recorded_by_name}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-slate-600">₹{payment.new_balance.toLocaleString('en-IN')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       {/* Record Repayment Modal */}
       {recordingInstallment && (
@@ -329,8 +399,9 @@ export const RepaymentLedger: React.FC<RepaymentLedgerProps> = ({
                 <input
                   type="number"
                   required
-                  min="50"
-                  max={loan.amount}
+                  min="0.01"
+                  max={remaining}
+                  step="0.01"
                   value={payAmount}
                   onChange={(e) => setPayAmount(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"

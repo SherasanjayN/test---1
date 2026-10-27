@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { ErrorRequestHandler } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import cookieParser from 'cookie-parser';
@@ -9,9 +9,12 @@ import groupRoutes from './server/routes/groupRoutes';
 import loanRoutes from './server/routes/loanRoutes';
 import messageRoutes from './server/routes/messageRoutes';
 import announcementRoutes from './server/routes/announcementRoutes';
-import emailRoutes from './server/routes/emailRoutes';
+import investmentRoutes from './server/routes/investmentRoutes';
+import adminMessageRoutes from './server/routes/adminMessageRoutes';
 import sosRoutes from './server/routes/sosRoutes';
 import meetingRoutes from './server/routes/meetingRoutes';
+import notificationRoutes from './server/routes/notificationRoutes';
+import aiRoutes from './server/routes/aiRoutes';
 
 dotenv.config();
 
@@ -32,9 +35,21 @@ app.use('/api/groups', groupRoutes);
 app.use('/api/groups', messageRoutes); // Mounts /api/groups/:id/messages
 app.use('/api/loans', loanRoutes);
 app.use('/api/announcements', announcementRoutes);
-app.use('/api/emails', emailRoutes);
+app.use('/api/investments', investmentRoutes);
+app.use('/api/admin-messages', adminMessageRoutes);
 app.use('/api/sos', sosRoutes);
 app.use('/api/meetings', meetingRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/ai', aiRoutes);
+
+const jsonParseErrorHandler: ErrorRequestHandler = (error, _req, res, next) => {
+  if (error?.type === 'entity.parse.failed') {
+    res.status(400).json({ error: 'Request body must be valid JSON.' });
+    return;
+  }
+  next(error);
+};
+app.use(jsonParseErrorHandler);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

@@ -1,8 +1,8 @@
 export type Role = 'USER' | 'GROUP_ADMIN' | 'SUPER_ADMIN';
 
-export type UserStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+export type UserStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'REMOVED';
 
-export type LoanStatus = 'PENDING_GROUP_ADMIN' | 'PENDING_SUPER_ADMIN' | 'APPROVED' | 'REJECTED';
+export type LoanStatus = 'PENDING_GROUP_ADMIN' | 'PENDING_SUPER_ADMIN' | 'APPROVED' | 'REJECTED' | 'COMPLETED';
 
 export type PaymentMode = 'UPI' | 'CASH';
 
@@ -20,6 +20,35 @@ export interface RepaymentInstallment {
   recorded_by_name?: string;
   transaction_ref?: string;
   note?: string;
+}
+
+export interface RepaymentTransaction {
+  id: string;
+  loan_id: string;
+  member_id: string;
+  group_id: string;
+  amount: number;
+  installment_number: number;
+  payment_date: string;
+  previous_balance: number;
+  new_balance: number;
+  recorded_by_id: string;
+  recorded_by_name: string;
+  recorded_by_role: Role;
+  payment_mode: PaymentMode;
+  idempotency_key?: string;
+  notes?: string;
+}
+
+export interface Notification {
+  id: string;
+  user_id: string;
+  type: string;
+  title: string;
+  message: string;
+  entity_id?: string;
+  created_at: string;
+  read_at?: string;
 }
 
 export interface User {
@@ -75,8 +104,10 @@ export interface Loan {
   repayment_frequency?: RepaymentFrequency;
   tenure_period?: number;
   installments?: RepaymentInstallment[];
+  repayments?: RepaymentTransaction[];
   total_paid?: number;
   remaining_balance?: number;
+  approved_amount?: number;
   next_due_date?: string;
   sanction_date?: string;
 }
@@ -89,6 +120,13 @@ export interface Message {
   sender_role: Role;
   text: string;
   timestamp: string;
+  updated_at?: string;
+  is_edited?: boolean;
+  is_deleted?: boolean;
+  deleted_at?: string;
+  deleted_by_id?: string;
+  deleted_text?: string;
+  edit_history?: Array<{ text: string; edited_at: string; edited_by_id: string }>;
 }
 
 export interface Announcement {
@@ -99,44 +137,43 @@ export interface Announcement {
   created_at: string;
 }
 
-export interface EmailLog {
+export type InvestmentFrequency = 'DAILY' | 'WEEKLY' | 'MONTHLY';
+
+export interface InvestmentContribution {
   id: string;
-  to: string;
-  subject: string;
-  body: string;
-  html?: string;
-  sent_at: string;
-  status: 'SENT' | 'SIMULATED' | 'FAILED';
-  delivery_mode?: 'REAL_SMTP' | 'DEV_ETHEREAL' | 'SIMULATED';
-  preview_url?: string;
-  info?: string;
-  error_details?: string;
+  investment_id: string;
+  user_id: string;
+  amount: number;
+  contributed_at: string;
+  status: 'RECORDED';
+  created_at: string;
+  payment_mode: 'CASH' | 'UPI';
+  note?: string;
 }
 
-export interface SmtpConfigInfo {
-  enabled: boolean;
-  provider: 'gmail' | 'custom' | 'ethereal';
-  host: string;
-  port: number;
-  secure: boolean;
-  user: string;
-  has_password?: boolean;
-  from_name: string;
-  from_email: string;
+export interface Investment {
+  id: string;
+  user_id: string;
+  amount_per_period: number;
+  frequency: InvestmentFrequency;
+  started_at: string;
+  note?: string;
+  status: 'ACTIVE' | 'PAUSED';
+  created_at: string;
+  updated_at?: string;
+  contributions: InvestmentContribution[];
+  total_contributed: number;
 }
 
-export interface SmtpStatusResponse {
-  config: SmtpConfigInfo | null;
-  active_mode: 'REAL_SMTP' | 'DEV_ETHEREAL';
-  active_transport: {
-    mode: 'REAL_SMTP' | 'DEV_ETHEREAL';
-    provider: 'gmail' | 'custom' | 'ethereal';
-    user: string;
-    host: string;
-    port: number;
-    isConfigured: boolean;
-  };
-  is_configured: boolean;
+export interface AdminMessage {
+  id: string;
+  title: string;
+  message: string;
+  author_id: string;
+  author_name: string;
+  author_role: Role;
+  group_id?: string;
+  created_at: string;
 }
 
 export type CrisisType = 'HEALTH' | 'DOMESTIC' | 'ACCIDENT' | 'DISASTER' | 'OTHER';

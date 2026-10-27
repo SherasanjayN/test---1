@@ -1,9 +1,19 @@
+import 'dotenv/config';
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import { randomBytes } from 'crypto';
 import { db, User } from './db';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'magalir_kuzhu_secure_jwt_token_secret_key_2026';
+const configuredSecret = process.env.JWT_SECRET;
+if (process.env.NODE_ENV === 'production' &&
+  (!configuredSecret || configuredSecret.length < 32 || configuredSecret.startsWith('replace-with-'))) {
+  throw new Error('Production requires a JWT_SECRET containing at least 32 characters.');
+}
+const JWT_SECRET = configuredSecret || randomBytes(32).toString('hex');
+if (!configuredSecret) {
+  console.warn('JWT_SECRET is not configured; sessions will expire when this process restarts.');
+}
 
 export interface AuthRequest extends Request {
   user?: User;
@@ -46,6 +56,10 @@ export function authenticate(req: AuthRequest, res: Response, next: NextFunction
       res.status(401).json({ error: 'User not found or account deactivated.' });
       return;
     }
+    if (user.status === 'REJECTED' || user.status === 'REMOVED') {
+      res.status(403).json({ error: 'This account cannot access the application.' });
+      return;
+    }
 
     req.user = user;
     next();
@@ -66,6 +80,11 @@ export function requireRole(...roles: Array<'USER' | 'GROUP_ADMIN' | 'SUPER_ADMI
       return;
     }
 
+    if (req.user.status !== 'APPROVED') {
+      res.status(403).json({ error: 'Your account must be approved before using this feature.' });
+      return;
+    }
+
     next();
   };
 }
@@ -73,15 +92,17 @@ export function requireRole(...roles: Array<'USER' | 'GROUP_ADMIN' | 'SUPER_ADMI
 export function validateRegistration(data: any): { valid: boolean; errors: Record<string, string> } {
   const errors: Record<string, string> = {};
 
-  // Name ≥ 3 letters
-  if (!data.name || typeof data.name !== 'string' || data.name.trim().length < 3) {
-    errors.name = 'Name must be at least 3 letters.';
+  // Names support Tamil and other Unicode letters, but never digits.
+  const name: string = typeof data.name === 'string' ? data.name.trim() : '';
+  const nameLetterCount = Array.from(name).filter(character => /\p{L}/u.test(character)).length;
+  if (nameLetterCount < 3 || !/^[\p{L}\p{M}][\p{L}\p{M}\s.'’-]*$/u.test(name)) {
+    errors.name = 'Name must contain at least 3 letters and no digits.';
   }
 
   // Phone exactly 10 digits
   const phoneClean = (data.phone || '').toString().trim();
-  if (!/^\d{10}$/.test(phoneClean)) {
-    errors.phone = 'Phone number must be exactly 10 digits.';
+  if (!/^[6-9]\d{9}$/.test(phoneClean)) {
+    errors.phone = 'Enter a valid 10-digit Indian mobile number.';
   }
 
   // Email regex check

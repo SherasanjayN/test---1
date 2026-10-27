@@ -1,16 +1,19 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../utils/translations';
-import { Users, Lock, Mail, Phone, MapPin, Building, ShieldCheck, UserCheck, User as UserIcon, AlertCircle, CheckCircle2, Globe, Sparkles } from 'lucide-react';
+import { Users, Lock, Mail, Phone, MapPin, Building, AlertCircle, CheckCircle2, Globe, Eye, EyeOff, Mic } from 'lucide-react';
+import { VoiceInputModal } from './VoiceInputModal';
 
 export const AuthScreen: React.FC = () => {
   const { login, register } = useAuth();
   const { language, setLanguage, t } = useLanguage();
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
+  const [voiceField, setVoiceField] = useState<'name' | 'phone' | 'area' | 'district' | null>(null);
 
   // Login form state
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
 
@@ -21,6 +24,7 @@ export const AuthScreen: React.FC = () => {
   const [regArea, setRegArea] = useState('');
   const [regDistrict, setRegDistrict] = useState('');
   const [regPassword, setRegPassword] = useState('');
+  const [showRegPassword, setShowRegPassword] = useState(false);
   const [regLoading, setRegLoading] = useState(false);
   const [regError, setRegError] = useState<string | null>(null);
   const [regSuccess, setRegSuccess] = useState<string | null>(null);
@@ -29,13 +33,15 @@ export const AuthScreen: React.FC = () => {
   const validateRegistration = () => {
     const errors: Record<string, string> = {};
 
-    if (!regName.trim() || regName.trim().length < 3) {
-      errors.name = language === 'ta' ? 'பெயர் குறைந்தது 3 எழுத்துக்கள் இருக்க வேண்டும்.' : 'Name must be at least 3 letters.';
+    const name = regName.trim();
+    const nameLetterCount = Array.from(name).filter(character => /\p{L}/u.test(character)).length;
+    if (nameLetterCount < 3 || !/^[\p{L}\p{M}][\p{L}\p{M}\s.'’-]*$/u.test(name)) {
+      errors.name = language === 'ta' ? 'பெயரில் குறைந்தது 3 எழுத்துகள் இருக்க வேண்டும்; எண்கள் அனுமதிக்கப்படாது.' : 'Name must contain at least 3 letters and no digits.';
     }
 
     const cleanPhone = regPhone.replace(/\D/g, '');
-    if (cleanPhone.length !== 10) {
-      errors.phone = language === 'ta' ? 'தொலைபேசி எண் சரியாக 10 இலக்கங்கள் இருக்க வேண்டும்.' : 'Phone number must be exactly 10 digits.';
+    if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
+      errors.phone = language === 'ta' ? 'சரியான 10 இலக்க இந்திய கைபேசி எண்ணை உள்ளிடவும்.' : 'Enter a valid 10-digit Indian mobile number.';
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -116,13 +122,6 @@ export const AuthScreen: React.FC = () => {
     } finally {
       setRegLoading(false);
     }
-  };
-
-  const handleQuickFill = (email: string, pass: string) => {
-    setLoginEmail(email);
-    setLoginPassword(pass);
-    setLoginError(null);
-    setActiveTab('login');
   };
 
   return (
@@ -235,7 +234,7 @@ export const AuthScreen: React.FC = () => {
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
                     placeholder={t.registeredEmailPlaceholder}
-                    className="block w-full pl-9 pr-3 py-2.5 bg-white border border-slate-300 rounded-lg text-slate-900 placeholder-slate-400 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                    className="block w-full pl-9 pr-10 py-2.5 bg-white border border-slate-300 rounded-lg text-slate-900 placeholder-slate-400 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
                   />
                 </div>
               </div>
@@ -249,7 +248,7 @@ export const AuthScreen: React.FC = () => {
                     <Lock className="w-4 h-4" />
                   </div>
                   <input
-                    type="password"
+                    type={showLoginPassword ? 'text' : 'password'}
                     required
                     autoComplete="off"
                     value={loginPassword}
@@ -257,6 +256,14 @@ export const AuthScreen: React.FC = () => {
                     placeholder={t.passwordPlaceholder}
                     className="block w-full pl-9 pr-3 py-2.5 bg-white border border-slate-300 rounded-lg text-slate-900 placeholder-slate-400 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowLoginPassword(value => !value)}
+                    aria-label={showLoginPassword ? 'Hide password' : 'Show password'}
+                    className="absolute inset-y-0 right-0 flex items-center px-3 text-slate-500 hover:text-emerald-700"
+                  >
+                    {showLoginPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
                 </div>
               </div>
 
@@ -322,17 +329,20 @@ export const AuthScreen: React.FC = () => {
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   {t.fullName} <span className="text-rose-500">*</span>
                 </label>
-                <input
-                  type="text"
-                  required
-                  autoComplete="off"
-                  value={regName}
-                  onChange={(e) => setRegName(e.target.value)}
-                  placeholder={t.fullNamePlaceholder}
-                  className={`block w-full px-3 py-2 bg-white border rounded-lg text-slate-900 placeholder-slate-400 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
-                    fieldErrors.name ? 'border-rose-400' : 'border-slate-300'
-                  }`}
-                />
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    required
+                    autoComplete="off"
+                    value={regName}
+                    onChange={(e) => setRegName(e.target.value)}
+                    placeholder={t.fullNamePlaceholder}
+                    className={`block min-w-0 flex-1 px-3 py-2 bg-white border rounded-lg text-slate-900 placeholder-slate-400 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
+                      fieldErrors.name ? 'border-rose-400' : 'border-slate-300'
+                    }`}
+                  />
+                  <button type="button" onClick={() => setVoiceField('name')} aria-label="Enter name by voice" className="rounded-lg border border-slate-300 px-3 text-emerald-700"><Mic className="h-4 w-4" /></button>
+                </div>
                 {fieldErrors.name && (
                   <p className="text-xs text-rose-600 mt-1">{fieldErrors.name}</p>
                 )}
@@ -344,7 +354,8 @@ export const AuthScreen: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     {t.phone} <span className="text-rose-500">*</span>
                   </label>
-                  <div className="relative">
+                  <div className="flex gap-2">
+                  <div className="relative min-w-0 flex-1">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
                       <Phone className="w-3.5 h-3.5" />
                     </div>
@@ -361,6 +372,8 @@ export const AuthScreen: React.FC = () => {
                       }`}
                     />
                   </div>
+                  <button type="button" onClick={() => setVoiceField('phone')} aria-label="Enter phone by voice" className="rounded-lg border border-slate-300 px-3 text-emerald-700"><Mic className="h-4 w-4" /></button>
+                  </div>
                   {fieldErrors.phone && (
                     <p className="text-xs text-rose-600 mt-1">{fieldErrors.phone}</p>
                   )}
@@ -370,7 +383,8 @@ export const AuthScreen: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     {t.emailAddress} <span className="text-rose-500">*</span>
                   </label>
-                  <div className="relative">
+                  <div className="flex gap-2">
+                  <div className="relative min-w-0 flex-1">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
                       <Mail className="w-3.5 h-3.5" />
                     </div>
@@ -386,6 +400,7 @@ export const AuthScreen: React.FC = () => {
                       }`}
                     />
                   </div>
+                  </div>
                   {fieldErrors.email && (
                     <p className="text-xs text-rose-600 mt-1">{fieldErrors.email}</p>
                   )}
@@ -398,7 +413,8 @@ export const AuthScreen: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     {t.areaLocality} <span className="text-rose-500">*</span>
                   </label>
-                  <div className="relative">
+                  <div className="flex gap-2">
+                  <div className="relative min-w-0 flex-1">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
                       <MapPin className="w-3.5 h-3.5" />
                     </div>
@@ -414,6 +430,8 @@ export const AuthScreen: React.FC = () => {
                       }`}
                     />
                   </div>
+                  <button type="button" onClick={() => setVoiceField('area')} aria-label="Enter area by voice" className="rounded-lg border border-slate-300 px-3 text-emerald-700"><Mic className="h-4 w-4" /></button>
+                  </div>
                   {fieldErrors.area && (
                     <p className="text-xs text-rose-600 mt-1">{fieldErrors.area}</p>
                   )}
@@ -423,7 +441,8 @@ export const AuthScreen: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     {t.district} <span className="text-rose-500">*</span>
                   </label>
-                  <div className="relative">
+                  <div className="flex gap-2">
+                  <div className="relative min-w-0 flex-1">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
                       <Building className="w-3.5 h-3.5" />
                     </div>
@@ -438,6 +457,8 @@ export const AuthScreen: React.FC = () => {
                         fieldErrors.district ? 'border-rose-400' : 'border-slate-300'
                       }`}
                     />
+                  </div>
+                  <button type="button" onClick={() => setVoiceField('district')} aria-label="Enter district by voice" className="rounded-lg border border-slate-300 px-3 text-emerald-700"><Mic className="h-4 w-4" /></button>
                   </div>
                   {fieldErrors.district && (
                     <p className="text-xs text-rose-600 mt-1">{fieldErrors.district}</p>
@@ -455,16 +476,24 @@ export const AuthScreen: React.FC = () => {
                     <Lock className="w-3.5 h-3.5" />
                   </div>
                   <input
-                    type="password"
+                    type={showRegPassword ? 'text' : 'password'}
                     required
                     autoComplete="off"
                     value={regPassword}
                     onChange={(e) => setRegPassword(e.target.value)}
                     placeholder={t.regPasswordPlaceholder}
-                    className={`block w-full pl-9 pr-3 py-2 bg-white border rounded-lg text-slate-900 placeholder-slate-400 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
+                    className={`block w-full pl-9 pr-10 py-2 bg-white border rounded-lg text-slate-900 placeholder-slate-400 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
                       fieldErrors.password ? 'border-rose-400' : 'border-slate-300'
                     }`}
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowRegPassword(value => !value)}
+                    aria-label={showRegPassword ? 'Hide password' : 'Show password'}
+                    className="absolute inset-y-0 right-0 flex items-center px-3 text-slate-500 hover:text-emerald-700"
+                  >
+                    {showRegPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
                 </div>
                 {fieldErrors.password && (
                   <p className="text-xs text-rose-600 mt-1">{fieldErrors.password}</p>
@@ -496,97 +525,18 @@ export const AuthScreen: React.FC = () => {
             </form>
           )}
         </div>
-
-        {/* Quick Demo Credentials Card (Directly addresses the user's explicit request!) */}
-        <div className="mt-6 bg-white p-5 rounded-2xl border border-emerald-200 shadow-md">
-          <div className="flex items-center space-x-2 text-emerald-800 font-bold text-sm mb-1">
-            <Sparkles className="w-4 h-4 text-emerald-600" />
-            <span>{t.demoCredentialsTitle}</span>
-          </div>
-          <p className="text-xs text-slate-600 mb-3">
-            {t.demoCredentialsSubtitle}
-          </p>
-
-          <div className="space-y-2.5">
-            {/* Super Admin */}
-            <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl flex items-center justify-between text-xs">
-              <div>
-                <div className="flex items-center space-x-1.5 font-bold text-amber-900">
-                  <ShieldCheck className="w-4 h-4 text-amber-700" />
-                  <span>{t.roleSuperAdmin} (Master)</span>
-                </div>
-                <div className="text-slate-700 font-mono text-[11px] mt-0.5">
-                  Email: <span className="font-semibold text-slate-900">sherasanjayn@gmail.com</span>
-                </div>
-                <div className="text-slate-700 font-mono text-[11px]">
-                  Password: <span className="font-semibold text-slate-900">Shera@0404</span>
-                </div>
-                <div className="text-[10px] text-amber-800 mt-0.5">
-                  {t.superAdminRoleDesc}
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => handleQuickFill('sherasanjayn@gmail.com', 'Shera@0404')}
-                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg shadow-xs transition-colors text-[11px] whitespace-nowrap ml-2"
-              >
-                {t.clickToFill}
-              </button>
-            </div>
-
-            {/* Group Admin */}
-            <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl flex items-center justify-between text-xs">
-              <div>
-                <div className="flex items-center space-x-1.5 font-bold text-emerald-900">
-                  <UserCheck className="w-4 h-4 text-emerald-700" />
-                  <span>{t.roleGroupAdmin} (Kavitha - Chennai)</span>
-                </div>
-                <div className="text-slate-700 font-mono text-[11px] mt-0.5">
-                  Email: <span className="font-semibold text-slate-900">kavitha.ga@gmail.com</span>
-                </div>
-                <div className="text-slate-700 font-mono text-[11px]">
-                  Password: <span className="font-semibold text-slate-900">Group@123</span>
-                </div>
-                <div className="text-[10px] text-emerald-800 mt-0.5">
-                  {t.groupAdminRoleDesc}
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => handleQuickFill('kavitha.ga@gmail.com', 'Group@123')}
-                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-xs transition-colors text-[11px] whitespace-nowrap ml-2"
-              >
-                {t.clickToFill}
-              </button>
-            </div>
-
-            {/* Member */}
-            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs">
-              <div>
-                <div className="flex items-center space-x-1.5 font-bold text-slate-800">
-                  <UserIcon className="w-4 h-4 text-slate-600" />
-                  <span>{t.roleMember} (Lakshmi Priya)</span>
-                </div>
-                <div className="text-slate-700 font-mono text-[11px] mt-0.5">
-                  Email: <span className="font-semibold text-slate-900">lakshmi.priya@gmail.com</span>
-                </div>
-                <div className="text-slate-700 font-mono text-[11px]">
-                  Password: <span className="font-semibold text-slate-900">Member@123</span>
-                </div>
-                <div className="text-[10px] text-slate-600 mt-0.5">
-                  {t.memberRoleDesc}
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => handleQuickFill('lakshmi.priya@gmail.com', 'Member@123')}
-                className="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white font-bold rounded-lg shadow-xs transition-colors text-[11px] whitespace-nowrap ml-2"
-              >
-                {t.clickToFill}
-              </button>
-            </div>
-          </div>
-        </div>
+        <VoiceInputModal
+          isOpen={voiceField !== null}
+          onClose={() => setVoiceField(null)}
+          fieldName={voiceField === 'phone' ? 'phone' : voiceField === 'name' ? 'name' : 'area'}
+          fieldLabel={voiceField === 'name' ? t.fullName : voiceField === 'phone' ? t.phone : voiceField === 'district' ? t.district : t.areaLocality}
+          onApplyValue={value => {
+            if (voiceField === 'name') setRegName(String(value));
+            else if (voiceField === 'phone') setRegPhone(String(value));
+            else if (voiceField === 'area') setRegArea(String(value));
+            else if (voiceField === 'district') setRegDistrict(String(value));
+          }}
+        />
       </div>
     </div>
   );

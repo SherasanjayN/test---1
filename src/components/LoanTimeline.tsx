@@ -1,7 +1,7 @@
 import React from 'react';
 import { Loan } from '../types';
 import { useLanguage } from '../utils/translations';
-import { Check, Clock, XCircle, Mail } from 'lucide-react';
+import { Check, Clock, XCircle, Bell } from 'lucide-react';
 
 interface LoanTimelineProps {
   loan: Loan;
@@ -149,12 +149,12 @@ export const LoanTimeline: React.FC<LoanTimelineProps> = ({ loan }) => {
       {/* Disbursal & Sanction Status Notice */}
       {loan.status === 'APPROVED' && (
         <div className="mt-4 p-3 rounded-xl bg-emerald-50 border border-emerald-300 text-xs text-emerald-900 flex items-start space-x-2">
-          <Mail className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+          <Bell className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
           <div>
             <span className="font-bold text-emerald-800">
-              {t.emailDispatchedTo} {loan.user_email}:
+              {language === 'ta' ? 'கடன் ஒப்புதல் வழங்கப்பட்டது.' : 'Loan approved.'}
             </span>{' '}
-            {t.emailDispatchNotice}
+            {language === 'ta' ? 'உங்கள் செயலி அறிவிப்புகளில் நிலை புதுப்பிப்பைப் பார்க்கவும்.' : 'Check your in-app notifications for status updates.'}
           </div>
         </div>
       )}

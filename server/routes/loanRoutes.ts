@@ -1,9 +1,12 @@
 import { Router } from 'express';
 import { db, Loan, LoanStatusEntry, generateInstallments, RepaymentFrequency } from '../db';
 import { authenticate, requireRole, AuthRequest } from '../auth';
-import { sendLoanSanctionEmail } from '../emailService';
 
 const router = Router();
+
+function reviewNote(value: unknown, fallback: string): string {
+  return typeof value === 'string' ? value.trim().slice(0, 500) || fallback : fallback;
+}
 
 // GET /api/loans - Filtered by role
 router.get('/', authenticate, (req: AuthRequest, res) => {
@@ -75,12 +78,19 @@ router.post('/request', authenticate, (req: AuthRequest, res) => {
     return;
   }
 
+  if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+    res.status(400).json({ error: 'A loan request body is required.' });
+    return;
+  }
+
   const { amount, payment_mode, upi_email, purpose, repayment_frequency, tenure_period } = req.body;
 
   // Validation: Amount must be number ≤ 10,000
   const parsedAmount = Number(amount);
-  if (isNaN(parsedAmount) || parsedAmount <= 0) {
-    res.status(400).json({ error: 'Please enter a valid loan amount.' });
+  if (!Number.isFinite(parsedAmount) || parsedAmount < 500 ||
+    !Number.isSafeInteger(Math.round(parsedAmount * 100)) ||
+    Math.abs(parsedAmount * 100 - Math.round(parsedAmount * 100)) > 1e-7) {
+    res.status(400).json({ error: 'Loan amount must be at least ₹500 and may contain no more than two decimal places.' });
     return;
   }
 
@@ -96,8 +106,22 @@ router.post('/request', authenticate, (req: AuthRequest, res) => {
   }
 
   // Repayment model: WEEKLY vs MONTHLY
+  if (repayment_frequency !== undefined && repayment_frequency !== 'WEEKLY' && repayment_frequency !== 'MONTHLY') {
+    res.status(400).json({ error: 'Repayment frequency must be WEEKLY or MONTHLY.' });
+    return;
+  }
   const freq: RepaymentFrequency = repayment_frequency === 'MONTHLY' ? 'MONTHLY' : 'WEEKLY';
-  const tenure = Number(tenure_period) || (freq === 'WEEKLY' ? 10 : 6);
+  const tenure = tenure_period === undefined ? (freq === 'WEEKLY' ? 10 : 6) : Number(tenure_period);
+  const allowedTenures = freq === 'WEEKLY' ? [10, 12, 20, 52] : [3, 6, 9, 12];
+  if (!Number.isSafeInteger(tenure) || !allowedTenures.includes(tenure)) {
+    res.status(400).json({ error: `Invalid ${freq.toLowerCase()} repayment tenure.` });
+    return;
+  }
+
+  if (purpose !== undefined && (typeof purpose !== 'string' || purpose.length > 1000)) {
+    res.status(400).json({ error: 'Loan purpose must be a text value of at most 1,000 characters.' });
+    return;
+  }
 
   // If UPI: require entering and verifying registered email ID
   if (payment_mode === 'UPI') {
@@ -146,7 +170,7 @@ router.post('/request', authenticate, (req: AuthRequest, res) => {
     remaining_balance: parsedAmount,
   };
 
-  db.addLoan(newLoan);
+  db.addLoan(newLoan, { id: user.id, role: user.role });
 
   res.status(201).json({
     message: 'Loan application submitted successfully. Forwarded to your Group Admin for first-tier review.',
@@ -173,21 +197,28 @@ router.post('/:id/group-approve', authenticate, requireRole('GROUP_ADMIN', 'SUPE
     return;
   }
 
-  const { note } = req.body;
   const now = new Date().toISOString();
+  const note = reviewNote(
+    req.body?.note,
+    'Approved by Group Admin. Forwarded to Super Admin for final sanction.'
+  );
 
   const historyEntry: LoanStatusEntry = {
     status: 'PENDING_SUPER_ADMIN',
     updated_at: now,
     updated_by_name: req.user!.name,
     updated_by_role: req.user!.role,
-    note: note ? note.trim() : 'Approved by Group Admin. Forwarded to Super Admin for final sanction.',
+    note,
   };
 
-  const updated = db.updateLoan(loan.id, {
-    status: 'PENDING_SUPER_ADMIN',
-    status_history: [...loan.status_history, historyEntry],
-  });
+  const updated = db.transitionLoan(
+    loan.id,
+    'PENDING_SUPER_ADMIN',
+    historyEntry,
+    { id: req.user!.id, role: req.user!.role },
+    `${req.user!.role}_APPROVED`,
+    note
+  );
 
   res.json({
     message: 'Loan approved by Group Admin and forwarded to Super Admin.',
@@ -208,21 +239,33 @@ router.post('/:id/group-reject', authenticate, requireRole('GROUP_ADMIN', 'SUPER
     return;
   }
 
-  const { note } = req.body;
+  if (loan.status !== 'PENDING_GROUP_ADMIN') {
+    res.status(409).json({ error: `Cannot reject a loan from current state: ${loan.status}.` });
+    return;
+  }
+
   const now = new Date().toISOString();
+  const note = reviewNote(
+    req.body?.note,
+    `Rejected by ${req.user!.role === 'GROUP_ADMIN' ? 'Group Admin' : 'Super Admin'} during group verification.`
+  );
 
   const historyEntry: LoanStatusEntry = {
     status: 'REJECTED',
     updated_at: now,
     updated_by_name: req.user!.name,
     updated_by_role: req.user!.role,
-    note: note ? note.trim() : 'Rejected by Group Admin during group verification.',
+    note,
   };
 
-  const updated = db.updateLoan(loan.id, {
-    status: 'REJECTED',
-    status_history: [...loan.status_history, historyEntry],
-  });
+  const updated = db.transitionLoan(
+    loan.id,
+    'REJECTED',
+    historyEntry,
+    { id: req.user!.id, role: req.user!.role },
+    `${req.user!.role}_DENIED`,
+    note
+  );
 
   res.json({
     message: 'Loan application was rejected.',
@@ -231,59 +274,59 @@ router.post('/:id/group-reject', authenticate, requireRole('GROUP_ADMIN', 'SUPER
 });
 
 // POST /api/loans/:id/super-approve - Super Admin final sanction
-router.post('/:id/super-approve', authenticate, requireRole('SUPER_ADMIN'), async (req: AuthRequest, res) => {
+router.post('/:id/super-approve', authenticate, requireRole('SUPER_ADMIN'), (req: AuthRequest, res) => {
   const loan = db.findLoanById(req.params.id);
   if (!loan) {
     res.status(404).json({ error: 'Loan not found.' });
     return;
   }
 
-  if (loan.status === 'APPROVED') {
-    res.status(400).json({ error: 'This loan has already been approved and sanctioned.' });
+  if (loan.status !== 'PENDING_SUPER_ADMIN') {
+    res.status(409).json({ error: `Only loans reviewed by a Group Admin can be sanctioned. Current status: ${loan.status}.` });
     return;
   }
 
-  const { note } = req.body;
   const now = new Date().toISOString();
+  const note = reviewNote(
+    req.body?.note,
+    'Final loan sanction granted by Super Admin. Funds released for disbursal.'
+  );
 
   const historyEntry: LoanStatusEntry = {
     status: 'APPROVED',
     updated_at: now,
     updated_by_name: req.user!.name,
     updated_by_role: 'SUPER_ADMIN',
-    note: note ? note.trim() : 'Final loan sanction granted by Super Admin. Funds released for disbursal.',
+    note,
   };
 
   const installments = loan.installments && loan.installments.length > 0
     ? loan.installments
     : generateInstallments(loan.amount, loan.repayment_frequency || 'WEEKLY', loan.tenure_period);
 
-  const updated = db.updateLoan(loan.id, {
-    status: 'APPROVED',
-    sanction_date: now,
-    installments,
-    total_paid: loan.total_paid || 0,
-    remaining_balance: loan.remaining_balance !== undefined ? loan.remaining_balance : loan.amount,
-    next_due_date: installments[0]?.due_date,
-    status_history: [...loan.status_history, historyEntry],
-  });
-
-  // Trigger real email notification per PRD:
-  let emailResult = null;
-  try {
-    emailResult = await sendLoanSanctionEmail({
-      userName: loan.user_name,
-      userEmail: loan.user_email,
-      amount: loan.amount,
-    });
-  } catch (emailErr) {
-    console.error('Failed to dispatch sanction email:', emailErr);
+  const updated = db.transitionLoan(
+    loan.id,
+    'APPROVED',
+    historyEntry,
+    { id: req.user!.id, role: req.user!.role },
+    'SUPER_ADMIN_APPROVED',
+    note,
+    {
+      sanction_date: now,
+      installments,
+      total_paid: loan.total_paid || 0,
+      remaining_balance: loan.approved_amount ?? loan.amount,
+      next_due_date: installments[0]?.due_date,
+    }
+  );
+  if (!updated) {
+    res.status(404).json({ error: 'Loan not found.' });
+    return;
   }
 
   res.json({
-    message: `Loan sanctioned successfully! Notification email dispatched to ${loan.user_email}.`,
+    message: 'Loan sanctioned successfully.',
     loan: updated,
-    emailResult,
   });
 });
 
@@ -295,21 +338,30 @@ router.post('/:id/super-reject', authenticate, requireRole('SUPER_ADMIN'), (req:
     return;
   }
 
-  const { note } = req.body;
+  if (loan.status !== 'PENDING_SUPER_ADMIN') {
+    res.status(409).json({ error: `Only loans awaiting Super Admin review can be rejected. Current status: ${loan.status}.` });
+    return;
+  }
+
   const now = new Date().toISOString();
+  const note = reviewNote(req.body?.note, 'Application rejected by Super Admin during central review.');
 
   const historyEntry: LoanStatusEntry = {
     status: 'REJECTED',
     updated_at: now,
     updated_by_name: req.user!.name,
     updated_by_role: 'SUPER_ADMIN',
-    note: note ? note.trim() : 'Application rejected by Super Admin during central review.',
+    note,
   };
 
-  const updated = db.updateLoan(loan.id, {
-    status: 'REJECTED',
-    status_history: [...loan.status_history, historyEntry],
-  });
+  const updated = db.transitionLoan(
+    loan.id,
+    'REJECTED',
+    historyEntry,
+    { id: req.user!.id, role: req.user!.role },
+    'SUPER_ADMIN_DENIED',
+    note
+  );
 
   res.json({
     message: 'Loan application was rejected by Super Admin.',
@@ -335,37 +387,75 @@ router.post('/:id/repay', authenticate, requireRole('GROUP_ADMIN', 'SUPER_ADMIN'
     return;
   }
 
-  const { installment_number, amount, payment_mode, note } = req.body;
+  if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+    res.status(400).json({ error: 'A repayment request body is required.' });
+    return;
+  }
+
+  const { installment_number, amount, payment_mode, note, idempotency_key } = req.body;
   const numInst = Number(installment_number);
   const numAmount = Number(amount);
 
-  if (isNaN(numInst) || numInst <= 0) {
+  if (!Number.isSafeInteger(numInst) || numInst <= 0) {
     res.status(400).json({ error: 'Invalid installment cycle number.' });
     return;
   }
 
-  if (isNaN(numAmount) || numAmount <= 0) {
-    res.status(400).json({ error: 'Please enter a valid repayment amount.' });
+  if (!Number.isFinite(numAmount) || numAmount <= 0 ||
+    !Number.isSafeInteger(Math.round(numAmount * 100)) ||
+    Math.abs(numAmount * 100 - Math.round(numAmount * 100)) > 1e-7) {
+    res.status(400).json({ error: 'Please enter a valid repayment amount with no more than two decimal places.' });
     return;
   }
 
-  const mode = payment_mode === 'UPI' ? 'UPI' : 'CASH';
+  if (payment_mode !== 'UPI' && payment_mode !== 'CASH') {
+    res.status(400).json({ error: 'Payment mode must be UPI or CASH.' });
+    return;
+  }
 
-  const updatedLoan = db.recordRepayment(loan.id, numInst, {
-    amount: numAmount,
-    mode,
-    recorded_by_name: req.user!.name,
-    note: note ? String(note).trim() : undefined,
-  });
+  if (typeof idempotency_key !== 'string' || !/^[A-Za-z0-9._:-]{8,128}$/.test(idempotency_key)) {
+    res.status(400).json({ error: 'Invalid repayment submission key.' });
+    return;
+  }
 
-  if (!updatedLoan) {
+  const keyMatch = db.findRepaymentByIdempotencyKey(idempotency_key);
+  if (keyMatch && (keyMatch.loan_id !== loan.id || keyMatch.recorded_by_id !== req.user!.id)) {
+    res.status(409).json({ error: 'This repayment submission key has already been used.' });
+    return;
+  }
+
+  const noteText = typeof note === 'string' ? note.trim().slice(0, 500) : undefined;
+  let result;
+  try {
+    result = db.recordRepayment(loan.id, numInst, {
+      amount: numAmount,
+      mode: payment_mode,
+      recorded_by_id: req.user!.id,
+      recorded_by_name: req.user!.name,
+      recorded_by_role: req.user!.role,
+      idempotency_key,
+      note: noteText,
+    });
+  } catch (error) {
+    if (error instanceof RangeError) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
+    throw error;
+  }
+
+  if (!result) {
     res.status(400).json({ error: 'Failed to record installment payment.' });
     return;
   }
 
   res.json({
-    message: `Payment of ₹${numAmount.toLocaleString('en-IN')} recorded successfully for Cycle #${numInst}.`,
-    loan: updatedLoan,
+    message: result.duplicate
+      ? 'This repayment was already recorded. The existing transaction is shown below.'
+      : `Payment of ₹${numAmount.toLocaleString('en-IN')} recorded successfully for Cycle #${numInst}.`,
+    loan: result.loan,
+    repayment: result.repayment,
+    duplicate: result.duplicate ?? false,
   });
 });
 
@@ -404,6 +494,8 @@ router.get('/:id/ledger', authenticate, (req: AuthRequest, res) => {
     remaining_balance: loan.remaining_balance !== undefined ? loan.remaining_balance : loan.amount,
     next_due_date: loan.next_due_date,
     installments: loan.installments || [],
+    repayments: db.getRepayments(loan.id),
+    audit_log: db.getLoanAuditLogs(loan.id),
   });
 });
 

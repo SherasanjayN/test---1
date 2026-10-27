@@ -10,7 +10,7 @@ export interface User {
   area: string;
   district: string;
   password_hash: string;
-  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'REMOVED';
   role: 'USER' | 'GROUP_ADMIN' | 'SUPER_ADMIN';
   group_id: string | null;
   created_at: string;
@@ -41,8 +41,106 @@ export interface RepaymentInstallment {
   note?: string;
 }
 
+export interface RepaymentTransaction {
+  id: string;
+  loan_id: string;
+  member_id: string;
+  group_id: string;
+  amount: number;
+  installment_number: number;
+  payment_date: string;
+  previous_balance: number;
+  new_balance: number;
+  recorded_by_id: string;
+  recorded_by_name: string;
+  recorded_by_role: User['role'];
+  payment_mode: 'UPI' | 'CASH';
+  idempotency_key?: string;
+  notes?: string;
+}
+
+export interface RepaymentResult {
+  loan: Loan;
+  repayment: RepaymentTransaction;
+  duplicate?: boolean;
+}
+
+function toCents(value: number): number {
+  return Math.round(value * 100);
+}
+
+export interface LoanAuditLog {
+  id: string;
+  loan_id: string;
+  actor_id: string;
+  actor_role: User['role'];
+  action: string;
+  previous_status?: Loan['status'];
+  new_status?: Loan['status'];
+  reason?: string;
+  created_at: string;
+}
+
+export interface Notification {
+  id: string;
+  user_id: string;
+  type: string;
+  title: string;
+  message: string;
+  entity_id?: string;
+  created_at: string;
+  read_at?: string;
+}
+
+export type InvestmentFrequency = 'DAILY' | 'WEEKLY' | 'MONTHLY';
+
+export interface Investment {
+  id: string;
+  user_id: string;
+  amount_per_period: number;
+  frequency: InvestmentFrequency;
+  started_at: string;
+  note?: string;
+  status: 'ACTIVE' | 'PAUSED';
+  created_at: string;
+}
+
+export interface InvestmentContribution {
+  id: string;
+  investment_id: string;
+  user_id: string;
+  amount: number;
+  contributed_at: string;
+  status: 'RECORDED';
+  created_at: string;
+  payment_mode: 'CASH' | 'UPI';
+  note?: string;
+}
+
+export interface AdminMessage {
+  id: string;
+  title: string;
+  message: string;
+  author_id: string;
+  author_name: string;
+  author_role: User['role'];
+  group_id?: string;
+  recipient_user_ids: string[];
+  created_at: string;
+}
+
+export interface ApplicationAuditEntry {
+  id: string;
+  actor_id: string;
+  actor_role: User['role'];
+  action: string;
+  entity_id: string;
+  details: string;
+  created_at: string;
+}
+
 export interface LoanStatusEntry {
-  status: 'PENDING_GROUP_ADMIN' | 'PENDING_SUPER_ADMIN' | 'APPROVED' | 'REJECTED';
+  status: 'PENDING_GROUP_ADMIN' | 'PENDING_SUPER_ADMIN' | 'APPROVED' | 'REJECTED' | 'COMPLETED';
   updated_at: string;
   updated_by_name: string;
   updated_by_role: string;
@@ -61,7 +159,7 @@ export interface Loan {
   payment_mode: 'UPI' | 'CASH';
   upi_email?: string;
   purpose?: string;
-  status: 'PENDING_GROUP_ADMIN' | 'PENDING_SUPER_ADMIN' | 'APPROVED' | 'REJECTED';
+  status: 'PENDING_GROUP_ADMIN' | 'PENDING_SUPER_ADMIN' | 'APPROVED' | 'REJECTED' | 'COMPLETED';
   requested_at: string;
   status_history: LoanStatusEntry[];
   repayment_frequency?: RepaymentFrequency;
@@ -69,8 +167,12 @@ export interface Loan {
   installments?: RepaymentInstallment[];
   total_paid?: number;
   remaining_balance?: number;
+  approved_amount?: number;
   next_due_date?: string;
   sanction_date?: string;
+  completed_at?: string;
+  is_fully_paid?: boolean;
+  repayments?: RepaymentTransaction[];
 }
 
 export function generateInstallments(
@@ -80,7 +182,9 @@ export function generateInstallments(
   startDate?: Date
 ): RepaymentInstallment[] {
   const count = tenure || (frequency === 'WEEKLY' ? 10 : 6);
-  const installmentAmount = Math.ceil(amount / count);
+  const amountCents = toCents(amount);
+  const installmentCents = Math.floor(amountCents / count);
+  const finalInstallmentCents = amountCents - installmentCents * (count - 1);
   const start = startDate ? new Date(startDate) : new Date();
   const installments: RepaymentInstallment[] = [];
 
@@ -92,13 +196,13 @@ export function generateInstallments(
       dueDate.setMonth(dueDate.getMonth() + i);
     }
 
-    const thisDue = i === count ? (amount - (installmentAmount * (count - 1))) : installmentAmount;
+    const thisDueCents = i === count ? finalInstallmentCents : installmentCents;
 
     installments.push({
       id: `inst_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 5)}`,
       installment_number: i,
       due_date: dueDate.toISOString().split('T')[0],
-      due_amount: thisDue > 0 ? thisDue : installmentAmount,
+      due_amount: thisDueCents / 100,
       paid_amount: 0,
       status: 'PENDING',
     });
@@ -114,6 +218,13 @@ export interface Message {
   sender_role: string;
   text: string;
   timestamp: string;
+  updated_at?: string;
+  is_edited?: boolean;
+  is_deleted?: boolean;
+  deleted_at?: string;
+  deleted_by_id?: string;
+  deleted_text?: string;
+  edit_history?: Array<{ text: string; edited_at: string; edited_by_id: string }>;
 }
 
 export interface Announcement {
@@ -122,32 +233,6 @@ export interface Announcement {
   message: string;
   author_name: string;
   created_at: string;
-}
-
-export interface EmailLog {
-  id: string;
-  to: string;
-  subject: string;
-  body: string;
-  html?: string;
-  sent_at: string;
-  status: 'SENT' | 'SIMULATED' | 'FAILED';
-  delivery_mode?: 'REAL_SMTP' | 'DEV_ETHEREAL' | 'SIMULATED';
-  preview_url?: string;
-  info?: string;
-  error_details?: string;
-}
-
-export interface SmtpConfig {
-  enabled: boolean;
-  provider: 'gmail' | 'custom' | 'ethereal';
-  host: string;
-  port: number;
-  secure: boolean;
-  user: string;
-  pass: string;
-  from_name: string;
-  from_email: string;
 }
 
 export type CrisisType = 'HEALTH' | 'DOMESTIC' | 'ACCIDENT' | 'DISASTER' | 'OTHER';
@@ -193,247 +278,137 @@ interface DatabaseSchema {
   loans: Loan[];
   messages: Message[];
   announcements: Announcement[];
-  emails: EmailLog[];
   sos_alerts: SosAlert[];
   meetings: MeetingRecord[];
-  smtp_config?: SmtpConfig;
+  repayments: RepaymentTransaction[];
+  loan_audit_logs: LoanAuditLog[];
+  notifications: Notification[];
+  investments: Investment[];
+  investment_contributions: InvestmentContribution[];
+  admin_messages: AdminMessage[];
+  application_audit_logs: ApplicationAuditEntry[];
 }
 
-const DATA_DIR = path.resolve(process.cwd(), 'data');
-const DB_FILE = path.join(DATA_DIR, 'db.json');
+const DEFAULT_DATA_DIR = path.resolve(process.cwd(), 'data');
 
-class Database {
+export class Database {
+  private readonly dataDir: string;
+  private readonly dbFile: string;
   private data: DatabaseSchema = {
     users: [],
     groups: [],
     loans: [],
     messages: [],
     announcements: [],
-    emails: [],
     sos_alerts: [],
     meetings: [],
+    repayments: [],
+    loan_audit_logs: [],
+    notifications: [],
+    investments: [],
+    investment_contributions: [],
+    admin_messages: [],
+    application_audit_logs: [],
   };
 
-  constructor() {
+  constructor(dataDir = process.env.SHG_DATA_DIR || DEFAULT_DATA_DIR) {
+    this.dataDir = path.resolve(dataDir);
+    this.dbFile = path.join(this.dataDir, 'db.json');
     this.init();
   }
 
   private init() {
-    if (!fs.existsSync(DATA_DIR)) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
+    if (!fs.existsSync(this.dataDir)) {
+      fs.mkdirSync(this.dataDir, { recursive: true });
     }
 
-    if (fs.existsSync(DB_FILE)) {
+    const databaseExists = fs.existsSync(this.dbFile);
+    if (databaseExists) {
       try {
-        const raw = fs.readFileSync(DB_FILE, 'utf-8');
+        const raw = fs.readFileSync(this.dbFile, 'utf-8');
         this.data = JSON.parse(raw);
+        if (!this.data.users) this.data.users = [];
+        if (!this.data.groups) this.data.groups = [];
+        if (!this.data.loans) this.data.loans = [];
+        if (!this.data.messages) this.data.messages = [];
+        if (!this.data.announcements) this.data.announcements = [];
         if (!this.data.sos_alerts) this.data.sos_alerts = [];
         if (!this.data.meetings) this.data.meetings = [];
-        if (!this.data.emails) this.data.emails = [];
+        if (!this.data.repayments) this.data.repayments = [];
+        if (!this.data.loan_audit_logs) this.data.loan_audit_logs = [];
+        if (!this.data.notifications) this.data.notifications = [];
+        if (!this.data.investments) this.data.investments = [];
+        if (!this.data.investment_contributions) this.data.investment_contributions = [];
+        if (!this.data.admin_messages) this.data.admin_messages = [];
+        if (!this.data.application_audit_logs) this.data.application_audit_logs = [];
       } catch (err) {
-        console.error('Failed to read db.json, creating fresh state', err);
-        this.seedDefaults();
-        this.save();
-        return;
+        throw new Error(`Failed to read database file at ${this.dbFile}; refusing to overwrite existing data.`, { cause: err });
       }
-    } else {
-      this.seedDefaults();
-    }
+    } else this.seedDefaults();
 
-    this.ensureSuperAdmin();
+    const adminCreated = this.ensureSuperAdmin();
+    if (!databaseExists || adminCreated) this.save();
   }
 
   private seedDefaults() {
-    const salt = bcrypt.genSaltSync(10);
-    const superAdminPasswordHash = bcrypt.hashSync('Shera@0404', salt);
-    const groupAdminPasswordHash = bcrypt.hashSync('Group@123', salt);
-    const memberPasswordHash = bcrypt.hashSync('Member@123', salt);
+    this.data = {
+      users: [],
+      groups: [],
+      loans: [],
+      messages: [],
+      announcements: [],
+      sos_alerts: [],
+      meetings: [],
+      repayments: [],
+      loan_audit_logs: [],
+      notifications: [],
+      investments: [],
+      investment_contributions: [],
+      admin_messages: [],
+      application_audit_logs: [],
+    };
+  }
 
-    const superAdmin: User = {
-      id: 'usr_super_admin_seed',
-      name: 'Sanjay N (Super Admin)',
-      phone: '9876543210',
-      email: 'sherasanjayn@gmail.com',
-      area: 'Chennai Central',
-      district: 'Chennai',
-      password_hash: superAdminPasswordHash,
+  private ensureSuperAdmin(): boolean {
+    const adminEmail = process.env.INITIAL_SUPER_ADMIN_EMAIL?.trim().toLowerCase();
+    const adminPassword = process.env.INITIAL_SUPER_ADMIN_PASSWORD;
+    const adminPhone = process.env.INITIAL_SUPER_ADMIN_PHONE?.trim();
+    const adminName = process.env.INITIAL_SUPER_ADMIN_NAME?.trim();
+    const adminArea = process.env.INITIAL_SUPER_ADMIN_AREA?.trim();
+    const adminDistrict = process.env.INITIAL_SUPER_ADMIN_DISTRICT?.trim();
+    const bootstrapConfigured = !!(adminEmail || adminPassword || adminPhone || adminName || adminArea || adminDistrict);
+    if (!bootstrapConfigured || this.data.users.some(user => user.email.toLowerCase() === adminEmail)) return false;
+    if (!adminEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail) ||
+      !adminPassword || adminPassword.length < 12 ||
+      !adminPhone || !/^\d{10}$/.test(adminPhone)) {
+      throw new Error('Super Admin bootstrap requires a valid email, a 12-character password, and a 10-digit phone number.');
+    }
+
+    const salt = bcrypt.genSaltSync(10);
+    this.data.users.unshift({
+      id: `usr_super_admin_${Date.now()}`,
+      name: adminName || 'Super Admin',
+      phone: adminPhone,
+      email: adminEmail,
+      area: adminArea || 'Not set',
+      district: adminDistrict || 'Not set',
+      password_hash: bcrypt.hashSync(adminPassword, salt),
       status: 'APPROVED',
       role: 'SUPER_ADMIN',
       group_id: null,
-      created_at: new Date(Date.now() - 86400000 * 7).toISOString(),
-    };
-
-    const groupAdmin1: User = {
-      id: 'usr_ga_1',
-      name: 'Kavitha Ramasamy (Group Admin)',
-      phone: '9840112233',
-      email: 'kavitha.ga@gmail.com',
-      area: 'Mylapore',
-      district: 'Chennai',
-      password_hash: groupAdminPasswordHash,
-      status: 'APPROVED',
-      role: 'GROUP_ADMIN',
-      group_id: 'grp_myla_01',
-      created_at: new Date(Date.now() - 86400000 * 5).toISOString(),
-    };
-
-    const member1: User = {
-      id: 'usr_mem_1',
-      name: 'Lakshmi Priya (Member)',
-      phone: '9840223344',
-      email: 'lakshmi.priya@gmail.com',
-      area: 'Mylapore',
-      district: 'Chennai',
-      password_hash: memberPasswordHash,
-      status: 'APPROVED',
-      role: 'USER',
-      group_id: 'grp_myla_01',
-      created_at: new Date(Date.now() - 86400000 * 4).toISOString(),
-    };
-
-    const groupAdmin2: User = {
-      id: 'usr_ga_2',
-      name: 'Meena Sundaram (Group Admin)',
-      phone: '9840334455',
-      email: 'meena.madurai@gmail.com',
-      area: 'Simmakkal',
-      district: 'Madurai',
-      password_hash: groupAdminPasswordHash,
-      status: 'APPROVED',
-      role: 'GROUP_ADMIN',
-      group_id: 'grp_mdu_01',
-      created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
-    };
-
-    const group1: Group = {
-      id: 'grp_myla_01',
-      group_name: 'Mylapore Mahasakthi Kuzhu',
-      area: 'Mylapore',
-      district: 'Chennai',
-      group_admin_id: 'usr_ga_1',
-      created_at: new Date(Date.now() - 86400000 * 5).toISOString(),
-    };
-
-    const group2: Group = {
-      id: 'grp_mdu_01',
-      group_name: 'Madurai Meenakshi Kuzhu',
-      area: 'Simmakkal',
-      district: 'Madurai',
-      group_admin_id: 'usr_ga_2',
-      created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
-    };
-
-    const announcements: Announcement[] = [
-      {
-        id: 'ann_1',
-        title: 'Monthly Savings & Group Meeting Scheduled',
-        message: 'All Magalir Kuzhu members are requested to complete monthly savings contribution before the 10th of every month. The general meeting will be hosted on coming Saturday.',
-        author_name: 'Sanjay N (Super Admin)',
-        created_at: new Date(Date.now() - 86400000 * 2).toISOString(),
-      },
-      {
-        id: 'ann_2',
-        title: 'Micro-Loan Limit Cap Reminder',
-        message: 'Members can apply for emergency loans up to ₹10,000 with 3-tier verification. Disbursals are processed immediately upon Super Admin final sanction.',
-        author_name: 'Sanjay N (Super Admin)',
-        created_at: new Date(Date.now() - 86400000 * 1).toISOString(),
-      },
-    ];
-
-    const messages: Message[] = [
-      {
-        id: 'msg_1',
-        group_id: 'grp_myla_01',
-        sender_id: 'usr_ga_1',
-        sender_name: 'Kavitha Ramasamy',
-        sender_role: 'GROUP_ADMIN',
-        text: 'Vanakkam to all members of Mylapore Mahasakthi Kuzhu! Welcome to our group chat.',
-        timestamp: new Date(Date.now() - 86400000 * 2).toISOString(),
-      },
-      {
-        id: 'msg_2',
-        group_id: 'grp_myla_01',
-        sender_id: 'usr_mem_1',
-        sender_name: 'Lakshmi Priya',
-        sender_role: 'USER',
-        text: 'Vanakkam Akka. Thank you! We can discuss our weekly meetings and loan applications here.',
-        timestamp: new Date(Date.now() - 86400000 * 1).toISOString(),
-      },
-    ];
-
-    const loans: Loan[] = [
-      {
-        id: 'loan_sample_1',
-        user_id: 'usr_mem_1',
-        user_name: 'Lakshmi Priya',
-        user_phone: '9840223344',
-        user_email: 'lakshmi.priya@gmail.com',
-        group_id: 'grp_myla_01',
-        group_name: 'Mylapore Mahasakthi Kuzhu',
-        amount: 8000,
-        payment_mode: 'UPI',
-        upi_email: 'lakshmi.priya@gmail.com',
-        purpose: 'Organic vegetables cart expansion',
-        status: 'PENDING_GROUP_ADMIN',
-        requested_at: new Date(Date.now() - 3600000 * 4).toISOString(),
-        status_history: [
-          {
-            status: 'PENDING_GROUP_ADMIN',
-            updated_at: new Date(Date.now() - 3600000 * 4).toISOString(),
-            updated_by_name: 'Lakshmi Priya',
-            updated_by_role: 'USER',
-            note: 'Loan request submitted with verified UPI email.',
-          },
-        ],
-      },
-    ];
-
-    this.data = {
-      users: [superAdmin, groupAdmin1, member1, groupAdmin2],
-      groups: [group1, group2],
-      loans,
-      messages,
-      announcements,
-      emails: [],
-      sos_alerts: [],
-      meetings: [],
-    };
-  }
-
-  private ensureSuperAdmin() {
-    const adminEmail = 'sherasanjayn@gmail.com';
-    const salt = bcrypt.genSaltSync(10);
-    const superAdminPasswordHash = bcrypt.hashSync('Shera@0404', salt);
-
-    const existing = this.data.users.find(u => u.email.toLowerCase() === adminEmail.toLowerCase());
-    if (!existing) {
-      this.data.users.unshift({
-        id: 'usr_super_admin_seed',
-        name: 'Sanjay N (Super Admin)',
-        phone: '9876543210',
-        email: adminEmail,
-        area: 'Chennai Central',
-        district: 'Chennai',
-        password_hash: superAdminPasswordHash,
-        status: 'APPROVED',
-        role: 'SUPER_ADMIN',
-        group_id: null,
-        created_at: new Date().toISOString(),
-      });
-      this.save();
-    } else {
-      existing.role = 'SUPER_ADMIN';
-      existing.status = 'APPROVED';
-      existing.password_hash = superAdminPasswordHash;
-      this.save();
-    }
+      created_at: new Date().toISOString(),
+    });
+    return true;
   }
 
   public save() {
+    const tempFile = `${this.dbFile}.${process.pid}.${Date.now()}.tmp`;
     try {
-      fs.writeFileSync(DB_FILE, JSON.stringify(this.data, null, 2), 'utf-8');
+      fs.writeFileSync(tempFile, JSON.stringify(this.data, null, 2), { encoding: 'utf-8', mode: 0o600 });
+      fs.renameSync(tempFile, this.dbFile);
     } catch (err) {
-      console.error('Error writing to db.json', err);
+      if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
+      throw new Error('Failed to persist application data.', { cause: err });
     }
   }
 
@@ -457,22 +432,43 @@ class Database {
     return this.data.messages;
   }
 
+  public findMessageById(id: string): Message | undefined {
+    return this.data.messages.find(message => message.id === id);
+  }
+
+  public updateMessage(
+    id: string,
+    text: string,
+    actorId: string
+  ): Message | undefined {
+    const message = this.findMessageById(id);
+    if (!message || message.is_deleted) return undefined;
+    message.edit_history = [
+      ...(message.edit_history || []),
+      { text: message.text, edited_at: new Date().toISOString(), edited_by_id: actorId },
+    ];
+    message.text = text;
+    message.updated_at = new Date().toISOString();
+    message.is_edited = true;
+    this.save();
+    return message;
+  }
+
+  public softDeleteMessage(id: string, actorId: string): Message | undefined {
+    const message = this.findMessageById(id);
+    if (!message || message.is_deleted) return undefined;
+    message.deleted_text = message.text;
+    message.text = '';
+    message.is_deleted = true;
+    message.deleted_at = new Date().toISOString();
+    message.deleted_by_id = actorId;
+    message.updated_at = message.deleted_at;
+    this.save();
+    return message;
+  }
+
   public getAnnouncements(): Announcement[] {
     return this.data.announcements;
-  }
-
-  public getEmails(): EmailLog[] {
-    return this.data.emails || [];
-  }
-
-  public getSmtpConfig(): SmtpConfig | undefined {
-    return this.data.smtp_config;
-  }
-
-  public setSmtpConfig(config: SmtpConfig): SmtpConfig {
-    this.data.smtp_config = config;
-    this.save();
-    return config;
   }
 
   // User methods
@@ -522,8 +518,45 @@ class Database {
     return this.data.loans.find(l => l.id === id);
   }
 
-  public addLoan(loan: Loan): Loan {
+  private addNotificationInMemory(notification: Omit<Notification, 'id' | 'created_at'>): Notification {
+    const record: Notification = {
+      ...notification,
+      id: `notification_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      created_at: new Date().toISOString(),
+    };
+    this.data.notifications.unshift(record);
+    return record;
+  }
+
+  public addLoan(loan: Loan, actor: Pick<User, 'id' | 'role'>): Loan {
     this.data.loans.unshift(loan);
+    this.data.loan_audit_logs.unshift({
+      id: `loan_audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      loan_id: loan.id,
+      actor_id: actor.id,
+      actor_role: actor.role,
+      action: 'MEMBER_SUBMITTED_LOAN',
+      new_status: loan.status,
+      reason: loan.purpose,
+      created_at: loan.requested_at,
+    });
+    const group = this.findGroupById(loan.group_id);
+    if (group?.group_admin_id) {
+      this.addNotificationInMemory({
+        user_id: group.group_admin_id,
+        type: 'LOAN_REQUEST',
+        title: 'New loan request',
+        message: `${loan.user_name} submitted a loan request for ₹${loan.amount.toLocaleString('en-IN')}.`,
+        entity_id: loan.id,
+      });
+    }
+    this.addNotificationInMemory({
+      user_id: loan.user_id,
+      type: 'LOAN_REQUEST',
+      title: 'Loan request submitted',
+      message: 'Your loan request has been submitted for Group Admin review.',
+      entity_id: loan.id,
+    });
     this.save();
     return loan;
   }
@@ -536,57 +569,350 @@ class Database {
     return loan;
   }
 
+  public transitionLoan(
+    id: string,
+    status: Loan['status'],
+    entry: LoanStatusEntry,
+    actor: Pick<User, 'id' | 'role'>,
+    action: string,
+    reason?: string,
+    updates: Omit<Partial<Loan>, 'status' | 'status_history'> = {}
+  ): Loan | undefined {
+    const loan = this.findLoanById(id);
+    if (!loan) return undefined;
+
+    const allowedTransitions: Record<Loan['status'], Loan['status'][]> = {
+      PENDING_GROUP_ADMIN: ['PENDING_SUPER_ADMIN', 'REJECTED'],
+      PENDING_SUPER_ADMIN: ['APPROVED', 'REJECTED'],
+      APPROVED: [],
+      REJECTED: [],
+      COMPLETED: [],
+    };
+    if (!allowedTransitions[loan.status].includes(status)) {
+      throw new RangeError(`Invalid loan transition from ${loan.status} to ${status}.`);
+    }
+
+    const snapshot = JSON.stringify(this.data);
+    const previousStatus = loan.status;
+    try {
+      loan.status = status;
+      loan.status_history = [...(loan.status_history || []), entry];
+      if (status === 'APPROVED') {
+        loan.approved_amount = loan.approved_amount ?? loan.amount;
+        loan.remaining_balance = loan.approved_amount;
+      }
+      Object.assign(loan, updates);
+
+      this.data.loan_audit_logs.unshift({
+        id: `loan_audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        loan_id: id,
+        actor_id: actor.id,
+        actor_role: actor.role,
+        action,
+        previous_status: previousStatus,
+        new_status: status,
+        reason,
+        created_at: entry.updated_at,
+      });
+      this.addNotificationInMemory({
+        user_id: loan.user_id,
+        type: status === 'REJECTED' ? 'LOAN_DENIED' : 'LOAN_STATUS',
+        title: status === 'REJECTED' ? 'Loan request denied' : 'Loan status updated',
+        message: reason
+          ? `${action.replaceAll('_', ' ')}: ${reason}`
+          : `Your loan request status is now ${status.replaceAll('_', ' ').toLowerCase()}.`,
+        entity_id: id,
+      });
+      if (status === 'PENDING_SUPER_ADMIN') {
+        this.data.users
+          .filter(user => user.role === 'SUPER_ADMIN' && user.status === 'APPROVED')
+          .forEach(admin => this.addNotificationInMemory({
+            user_id: admin.id,
+            type: 'LOAN_REVIEW',
+            title: 'Loan ready for final review',
+            message: `${loan.user_name}'s loan request is awaiting Super Admin review.`,
+            entity_id: id,
+          }));
+      }
+      this.save();
+      return loan;
+    } catch (error) {
+      this.data = JSON.parse(snapshot) as DatabaseSchema;
+      throw error;
+    }
+  }
+
+  public getRepayments(loanId?: string): RepaymentTransaction[] {
+    return loanId
+      ? this.data.repayments.filter(repayment => repayment.loan_id === loanId)
+      : this.data.repayments;
+  }
+
+  public getLoanAuditLogs(loanId?: string): LoanAuditLog[] {
+    return loanId
+      ? this.data.loan_audit_logs.filter(log => log.loan_id === loanId)
+      : this.data.loan_audit_logs;
+  }
+
+  public findRepaymentByIdempotencyKey(key: string): RepaymentTransaction | undefined {
+    return this.data.repayments.find(repayment => repayment.idempotency_key === key);
+  }
+
+  public getNotifications(userId: string): Notification[] {
+    return this.data.notifications.filter(notification => notification.user_id === userId);
+  }
+
+  public getInvestments(userId: string): Investment[] {
+    return this.data.investments.filter(investment => investment.user_id === userId);
+  }
+
+  public getInvestmentContributions(investmentId: string): InvestmentContribution[] {
+    return this.data.investment_contributions.filter(contribution => contribution.investment_id === investmentId);
+  }
+
+  public createInvestment(investment: Investment, actor: Pick<User, 'id' | 'role'>): Investment {
+    this.data.investments.unshift(investment);
+    this.data.application_audit_logs.unshift({
+      id: `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      actor_id: actor.id,
+      actor_role: actor.role,
+      action: 'INVESTMENT_CREATED',
+      entity_id: investment.id,
+      details: `Created ${investment.frequency.toLowerCase()} contribution plan.`,
+      created_at: new Date().toISOString(),
+    });
+    this.save();
+    return investment;
+  }
+
+  public recordInvestmentContribution(contribution: InvestmentContribution, actor: Pick<User, 'id' | 'role'>): InvestmentContribution {
+    this.data.investment_contributions.unshift(contribution);
+    this.data.application_audit_logs.unshift({
+      id: `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      actor_id: actor.id,
+      actor_role: actor.role,
+      action: 'INVESTMENT_CONTRIBUTION_RECORDED',
+      entity_id: contribution.id,
+      details: `Recorded contribution of ₹${contribution.amount.toFixed(2)}.`,
+      created_at: new Date().toISOString(),
+    });
+    this.save();
+    return contribution;
+  }
+
+  public createAdminMessage(message: AdminMessage): AdminMessage {
+    this.data.admin_messages.unshift(message);
+    for (const userId of message.recipient_user_ids) {
+      this.addNotificationInMemory({
+        user_id: userId,
+        type: 'ADMIN_MESSAGE',
+        title: message.title,
+        message: message.message,
+        entity_id: message.id,
+      });
+    }
+    this.data.application_audit_logs.unshift({
+      id: `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      actor_id: message.author_id,
+      actor_role: message.author_role,
+      action: 'ADMIN_MESSAGE_SENT',
+      entity_id: message.id,
+      details: `Delivered to ${message.recipient_user_ids.length} user(s).`,
+      created_at: message.created_at,
+    });
+    this.save();
+    return message;
+  }
+
+  public getAdminMessages(userId: string): AdminMessage[] {
+    return this.data.admin_messages.filter(message => message.recipient_user_ids.includes(userId));
+  }
+
+  public removeUserFromActiveAccess(userId: string, actor: Pick<User, 'id' | 'role'>): User | undefined {
+    const user = this.findUserById(userId);
+    if (!user || user.status === 'REMOVED' || user.role === 'SUPER_ADMIN') return undefined;
+    const snapshot = JSON.stringify(this.data);
+    try {
+      const group = user.group_id ? this.findGroupById(user.group_id) : undefined;
+      if (group?.group_admin_id === user.id) group.group_admin_id = null;
+      user.status = 'REMOVED';
+      user.group_id = null;
+      this.data.application_audit_logs.unshift({
+        id: `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        actor_id: actor.id,
+        actor_role: actor.role,
+        action: 'USER_REMOVED',
+        entity_id: user.id,
+        details: `Removed ${user.name} from active access; financial history was retained.`,
+        created_at: new Date().toISOString(),
+      });
+      this.save();
+      return user;
+    } catch (error) {
+      this.data = JSON.parse(snapshot) as DatabaseSchema;
+      throw error;
+    }
+  }
+
+  public markNotificationRead(notificationId: string, userId: string): Notification | undefined {
+    const notification = this.data.notifications.find(item =>
+      item.id === notificationId && item.user_id === userId
+    );
+    if (!notification) return undefined;
+    notification.read_at = new Date().toISOString();
+    this.save();
+    return notification;
+  }
+
   public recordRepayment(
     loanId: string,
     installmentNumber: number,
-    payment: { amount: number; mode: 'UPI' | 'CASH'; recorded_by_name: string; note?: string }
-  ): Loan | undefined {
+    payment: {
+      amount: number;
+      mode: 'UPI' | 'CASH';
+      recorded_by_id: string;
+      recorded_by_name: string;
+      recorded_by_role: User['role'];
+      idempotency_key?: string;
+      note?: string;
+    }
+  ): RepaymentResult | undefined {
     const loan = this.findLoanById(loanId);
     if (!loan) return undefined;
 
+    if (payment.idempotency_key) {
+      const previousPayment = this.findRepaymentByIdempotencyKey(payment.idempotency_key);
+      if (previousPayment) {
+        if (previousPayment.loan_id !== loanId || previousPayment.recorded_by_id !== payment.recorded_by_id) {
+          throw new RangeError('This repayment submission key has already been used.');
+        }
+        const existingLoan = this.findLoanById(previousPayment.loan_id);
+        if (existingLoan) return { loan: existingLoan, repayment: previousPayment, duplicate: true };
+      }
+    }
+
+    const paymentCents = toCents(payment.amount);
+    const previousBalanceCents = toCents(
+      loan.remaining_balance ?? loan.amount - (loan.total_paid || 0)
+    );
+    if (paymentCents <= 0) throw new RangeError('Repayment amount must be greater than zero.');
+    if (paymentCents > previousBalanceCents) {
+      throw new RangeError(
+        `Payment cannot exceed the remaining loan balance of ₹${(previousBalanceCents / 100).toLocaleString('en-IN')}.`
+      );
+    }
+
     if (!loan.installments || loan.installments.length === 0) {
-      loan.installments = generateInstallments(loan.amount, loan.repayment_frequency || 'WEEKLY', loan.tenure_period);
+      loan.installments = generateInstallments(
+        loan.approved_amount ?? loan.amount,
+        loan.repayment_frequency || 'WEEKLY',
+        loan.tenure_period,
+        loan.sanction_date ? new Date(loan.sanction_date) : new Date()
+      );
     }
 
     const inst = loan.installments.find(i => i.installment_number === installmentNumber);
     if (!inst) return undefined;
 
-    inst.paid_amount = (inst.paid_amount || 0) + payment.amount;
-    inst.paid_date = new Date().toISOString();
-    inst.payment_mode = payment.mode;
-    inst.recorded_by_name = payment.recorded_by_name;
-    inst.note = payment.note;
-    inst.transaction_ref = `TXN_${Date.now().toString().slice(-6)}`;
+    const snapshot = JSON.stringify(this.data);
+    try {
+      const now = new Date().toISOString();
+      const transactionRef = `TXN_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const newBalanceCents = previousBalanceCents - paymentCents;
+      const repayment: RepaymentTransaction = {
+        id: `repayment_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        loan_id: loan.id,
+        member_id: loan.user_id,
+        group_id: loan.group_id,
+        amount: paymentCents / 100,
+        installment_number: installmentNumber,
+        payment_date: now,
+        previous_balance: previousBalanceCents / 100,
+        new_balance: newBalanceCents / 100,
+        recorded_by_id: payment.recorded_by_id,
+        recorded_by_name: payment.recorded_by_name,
+        recorded_by_role: payment.recorded_by_role,
+        payment_mode: payment.mode,
+        idempotency_key: payment.idempotency_key,
+        notes: payment.note,
+      };
 
-    if (inst.paid_amount >= inst.due_amount) {
-      inst.status = 'PAID';
-    } else if (inst.paid_amount > 0) {
-      inst.status = 'PARTIAL';
-    }
+      inst.paid_amount = (toCents(inst.paid_amount || 0) + paymentCents) / 100;
+      inst.paid_date = now;
+      inst.payment_mode = payment.mode;
+      inst.recorded_by_name = payment.recorded_by_name;
+      inst.note = payment.note;
+      inst.transaction_ref = transactionRef;
+      inst.status = toCents(inst.paid_amount) >= toCents(inst.due_amount) ? 'PAID' : 'PARTIAL';
 
-    // Recompute total_paid, remaining_balance, and next_due_date
-    const totalPaid = loan.installments.reduce((sum, i) => sum + (i.paid_amount || 0), 0);
-    loan.total_paid = totalPaid;
-    loan.remaining_balance = Math.max(0, loan.amount - totalPaid);
+      loan.total_paid = (toCents(loan.total_paid || 0) + paymentCents) / 100;
+      loan.remaining_balance = newBalanceCents / 100;
+      loan.repayments = [...(loan.repayments || []), repayment];
+      this.data.repayments.unshift(repayment);
+      this.data.loan_audit_logs.unshift({
+        id: `loan_audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        loan_id: loan.id,
+        actor_id: payment.recorded_by_id,
+        actor_role: payment.recorded_by_role,
+        action: 'REPAYMENT_ADDED',
+        previous_status: loan.status,
+        new_status: newBalanceCents === 0 ? 'COMPLETED' : loan.status,
+        reason: payment.note,
+        created_at: now,
+      });
 
-    // Update overdue flags and next due date
-    const today = new Date().toISOString().split('T')[0];
-    let nextDue: string | undefined = undefined;
-
-    loan.installments.forEach(i => {
-      if (i.status !== 'PAID') {
-        if (i.due_date < today) {
-          i.status = 'OVERDUE';
+      if (newBalanceCents === 0) {
+        loan.status = 'COMPLETED';
+        loan.completed_at = now;
+        loan.is_fully_paid = true;
+        loan.next_due_date = undefined;
+        loan.status_history = [
+          ...(loan.status_history || []),
+          {
+            status: 'COMPLETED',
+            updated_at: now,
+            updated_by_name: payment.recorded_by_name,
+            updated_by_role: payment.recorded_by_role,
+            note: 'Loan balance fully repaid.',
+          },
+        ];
+        this.data.loan_audit_logs.unshift({
+          id: `loan_audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          loan_id: loan.id,
+          actor_id: payment.recorded_by_id,
+          actor_role: payment.recorded_by_role,
+          action: 'LOAN_COMPLETED',
+          previous_status: 'APPROVED',
+          new_status: 'COMPLETED',
+          created_at: now,
+        });
+      } else {
+        const today = now.slice(0, 10);
+        let nextDue: string | undefined;
+        for (const installment of loan.installments) {
+          if (installment.status === 'PAID') continue;
+          if (installment.due_date < today) installment.status = 'OVERDUE';
+          if (!nextDue) nextDue = installment.due_date;
         }
-        if (!nextDue) {
-          nextDue = i.due_date;
-        }
+        loan.next_due_date = nextDue;
       }
-    });
 
-    loan.next_due_date = nextDue;
-    this.save();
-    return loan;
+      this.addNotificationInMemory({
+        user_id: loan.user_id,
+        type: newBalanceCents === 0 ? 'LOAN_COMPLETED' : 'REPAYMENT_RECORDED',
+        title: newBalanceCents === 0 ? 'Loan fully repaid' : 'Repayment recorded',
+        message: newBalanceCents === 0
+          ? 'Congratulations! Your loan has been fully repaid.'
+          : `₹${(paymentCents / 100).toLocaleString('en-IN')} repayment recorded. Remaining balance: ₹${(newBalanceCents / 100).toLocaleString('en-IN')}.`,
+        entity_id: loan.id,
+      });
+
+      this.save();
+      return { loan, repayment };
+    } catch (error) {
+      this.data = JSON.parse(snapshot) as DatabaseSchema;
+      throw error;
+    }
   }
 
   // Message methods
@@ -601,14 +927,6 @@ class Database {
     this.data.announcements.unshift(announcement);
     this.save();
     return announcement;
-  }
-
-  // Email logs
-  public addEmailLog(log: EmailLog): EmailLog {
-    if (!this.data.emails) this.data.emails = [];
-    this.data.emails.unshift(log);
-    this.save();
-    return log;
   }
 
   // SOS Emergency & Micro-Grant methods

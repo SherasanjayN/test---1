@@ -3,7 +3,8 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../utils/translations';
 import { api } from '../api';
 import { Message } from '../types';
-import { Send, MessageSquare, ShieldCheck, UserCheck, User as UserIcon, RefreshCw } from 'lucide-react';
+import { Send, MessageSquare, ShieldCheck, UserCheck, User as UserIcon, RefreshCw, Pencil, Trash2, Check, X, Mic } from 'lucide-react';
+import { VoiceInputModal } from './VoiceInputModal';
 
 interface GroupChatProps {
   groupId: string;
@@ -18,6 +19,9 @@ export const GroupChat: React.FC<GroupChatProps> = ({ groupId, groupName }) => {
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState('');
+  const [voiceTarget, setVoiceTarget] = useState<'message' | 'edit' | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const fetchMessages = async (silent = false) => {
@@ -65,6 +69,32 @@ export const GroupChat: React.FC<GroupChatProps> = ({ groupId, groupName }) => {
       setInputText(textToSend); // restore on fail
     } finally {
       setSending(false);
+    }
+  };
+
+  const handleEdit = async (messageId: string) => {
+    const text = editText.trim();
+    if (!text || text.length > 2000) return;
+    try {
+      const updated = await api.updateMessage(groupId, messageId, text);
+      setMessages(current => current.map(message => message.id === messageId ? updated : message));
+      setEditingId(null);
+      setEditText('');
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to edit message.');
+    }
+  };
+
+  const handleDelete = async (messageId: string) => {
+    const confirmed = window.confirm(language === 'ta' ? 'இந்த செய்தியை நீக்க விரும்புகிறீர்களா?' : 'Delete this message?');
+    if (!confirmed) return;
+    try {
+      const deleted = await api.deleteMessage(groupId, messageId);
+      setMessages(current => current.map(message => message.id === messageId ? deleted : message));
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete message.');
     }
   };
 
@@ -141,6 +171,7 @@ export const GroupChat: React.FC<GroupChatProps> = ({ groupId, groupName }) => {
 
         {messages.map((msg) => {
           const isMe = msg.sender_id === user?.id;
+          const canModerate = user?.role === 'GROUP_ADMIN' || user?.role === 'SUPER_ADMIN';
 
           return (
             <div
@@ -167,7 +198,55 @@ export const GroupChat: React.FC<GroupChatProps> = ({ groupId, groupName }) => {
                     : 'bg-white text-slate-800 border border-slate-200 rounded-tl-none shadow-xs'
                 }`}
               >
-                <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>
+                {msg.is_deleted ? (
+                  <p className="italic text-slate-400">{language === 'ta' ? 'இந்த செய்தி நீக்கப்பட்டது' : 'This message was deleted'}</p>
+                ) : editingId === msg.id ? (
+                  <div className="flex items-center gap-1">
+                    <input
+                      value={editText}
+                      maxLength={2000}
+                      onChange={event => setEditText(event.target.value)}
+                      aria-label={language === 'ta' ? 'செய்தியைத் திருத்து' : 'Edit message'}
+                      className="min-w-0 flex-1 rounded-lg px-2 py-1 text-slate-900"
+                    />
+                    <button type="button" onClick={() => setVoiceTarget('edit')} aria-label="Enter edited message by voice" className="p-1 text-emerald-700">
+                      <Mic className="h-3.5 w-3.5" />
+                    </button>
+                    <button type="button" onClick={() => void handleEdit(msg.id)} aria-label="Save edit" className="p-1 text-emerald-700">
+                      <Check className="h-3.5 w-3.5" />
+                    </button>
+                    <button type="button" onClick={() => { setEditingId(null); setEditText(''); }} aria-label="Cancel edit" className="p-1">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>
+                    {msg.is_edited && <span className="mt-1 block text-[9px] opacity-70">{language === 'ta' ? 'திருத்தப்பட்டது' : 'edited'}</span>}
+                    <div className="mt-1 flex justify-end gap-2">
+                      {(isMe || canModerate) && (
+                        <button
+                          type="button"
+                          onClick={() => { setEditingId(msg.id); setEditText(msg.text); }}
+                          aria-label={language === 'ta' ? 'செய்தியைத் திருத்து' : 'Edit message'}
+                          className="opacity-70 hover:opacity-100"
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                      )}
+                      {(isMe || canModerate) && (
+                        <button
+                          type="button"
+                          onClick={() => void handleDelete(msg.id)}
+                          aria-label={language === 'ta' ? 'செய்தியை நீக்கு' : 'Delete message'}
+                          className="opacity-70 hover:opacity-100"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           );
@@ -180,10 +259,14 @@ export const GroupChat: React.FC<GroupChatProps> = ({ groupId, groupName }) => {
         <input
           type="text"
           value={inputText}
+          maxLength={2000}
           onChange={(e) => setInputText(e.target.value)}
           placeholder={t.typeMessagePlaceholder}
           className="flex-1 px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 placeholder-slate-400 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white"
         />
+        <button type="button" onClick={() => setVoiceTarget('message')} aria-label="Enter chat message by voice" className="rounded-xl border border-slate-300 p-2.5 text-emerald-700">
+          <Mic className="h-4 w-4" />
+        </button>
         <button
           type="submit"
           disabled={!inputText.trim() || sending}
@@ -193,6 +276,16 @@ export const GroupChat: React.FC<GroupChatProps> = ({ groupId, groupName }) => {
           <Send className="w-4 h-4" />
         </button>
       </form>
+      <VoiceInputModal
+        isOpen={voiceTarget !== null}
+        onClose={() => setVoiceTarget(null)}
+        fieldName="purpose"
+        fieldLabel={language === 'ta' ? 'குழு செய்தி' : 'Group chat message'}
+        onApplyValue={value => {
+          if (voiceTarget === 'edit') setEditText(String(value));
+          else setInputText(String(value));
+        }}
+      />
     </div>
   );
 };

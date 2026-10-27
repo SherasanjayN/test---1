@@ -2,13 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../utils/translations';
 import { api } from '../api';
-import { User, Group, Loan, Announcement, EmailLog, SmtpStatusResponse } from '../types';
+import { User, Group, Loan, Announcement } from '../types';
 import { LoanTimeline } from './LoanTimeline';
 import { GroupChat } from './GroupChat';
 import { AnnouncementsFeed } from './AnnouncementsFeed';
+import { AdminMessageCenter } from './AdminMessageCenter';
+import { LoanEmiCalculator } from './LoanEmiCalculator';
 import { SosAlertBanner } from './SosAlertBanner';
-import { EmailConfigModal } from './EmailConfigModal';
-import { EmailViewerModal } from './EmailViewerModal';
 import { RepaymentLedger } from './RepaymentLedger';
 import { generateLoanSanctionPdf } from '../utils/pdfGenerator';
 import {
@@ -17,7 +17,6 @@ import {
   Building,
   CreditCard,
   Bell,
-  Mail,
   UserCheck,
   CheckCircle2,
   XCircle,
@@ -26,19 +25,17 @@ import {
   Search,
   RefreshCw,
   Phone,
+  Mail,
   MapPin,
   IndianRupee,
   Send,
   MessageSquare,
-  ExternalLink,
   X,
-  Settings,
-  Eye,
-  AlertTriangle,
   Download,
   BookOpen,
   ChevronDown,
   ChevronUp,
+  Home,
 } from 'lucide-react';
 
 export const SuperAdminDashboard: React.FC = () => {
@@ -46,8 +43,8 @@ export const SuperAdminDashboard: React.FC = () => {
   const { t, language } = useLanguage();
 
   const [activeTab, setActiveTab] = useState<
-    'pending' | 'users' | 'groups' | 'loans' | 'announcements' | 'emails'
-  >('pending');
+    'home' | 'pending' | 'users' | 'groups' | 'loans' | 'calculator' | 'announcements' | 'messages'
+  >('home');
 
   const [activeLedgerLoanId, setActiveLedgerLoanId] = useState<string | null>(null);
 
@@ -56,10 +53,6 @@ export const SuperAdminDashboard: React.FC = () => {
   const [groups, setGroups] = useState<Group[]>([]);
   const [loans, setLoans] = useState<Loan[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
-  const [emails, setEmails] = useState<EmailLog[]>([]);
-  const [smtpStatus, setSmtpStatus] = useState<SmtpStatusResponse | null>(null);
-  const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
-  const [viewingEmail, setViewingEmail] = useState<EmailLog | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -88,7 +81,7 @@ export const SuperAdminDashboard: React.FC = () => {
 
   // User search/filter
   const [userSearch, setUserSearch] = useState('');
-  const [userStatusFilter, setUserStatusFilter] = useState<'ALL' | 'APPROVED' | 'PENDING' | 'REJECTED'>('ALL');
+  const [userStatusFilter, setUserStatusFilter] = useState<'ALL' | 'APPROVED' | 'PENDING' | 'REJECTED' | 'REMOVED'>('ALL');
 
   // Loan status filter
   const [loanFilter, setLoanFilter] = useState<'ALL' | 'PENDING_SUPER_ADMIN' | 'PENDING_GROUP_ADMIN' | 'APPROVED' | 'REJECTED'>('PENDING_SUPER_ADMIN');
@@ -96,22 +89,18 @@ export const SuperAdminDashboard: React.FC = () => {
   const fetchAllData = async () => {
     try {
       setLoading(true);
-      const [pendingRes, usersRes, groupsRes, loansRes, annRes, emailRes, smtpRes] = await Promise.all([
+      const [pendingRes, usersRes, groupsRes, loansRes, annRes] = await Promise.all([
         api.getPendingUsers(),
         api.getUsers(),
         api.getGroups(),
         api.getLoans(),
         api.getAnnouncements(),
-        api.getEmails(),
-        api.getSmtpConfig().catch(() => null),
       ]);
       setPendingUsers(pendingRes);
       setAllUsers(usersRes);
       setGroups(groupsRes);
       setLoans(loansRes);
       setAnnouncements(annRes);
-      setEmails(emailRes);
-      if (smtpRes) setSmtpStatus(smtpRes);
     } catch (err: any) {
       console.error('Error fetching admin data:', err);
     } finally {
@@ -201,17 +190,14 @@ export const SuperAdminDashboard: React.FC = () => {
     }
   };
 
-  // Loan Final Sanction (Super Admin) - Triggers real email notification
+  // Loan Final Sanction (Super Admin)
   const handleSuperApproveLoan = async (loan: Loan) => {
     try {
       setActionLoading(loan.id);
       const note = sanctionNote[loan.id] || (language === 'ta' ? 'முதன்மை நிர்வாகியால் இறுதி கடன் ஒப்புதல் அளிக்கப்பட்டது.' : 'Final loan sanction approved by Super Admin.');
       await api.superApproveLoan(loan.id, note);
 
-      showToast(
-        'success',
-        `${language === 'ta' ? 'கடன் ஒப்புதல் அளிக்கப்பட்டது! மின்னஞ்சல் அனுப்பப்பட்டது:' : 'Loan sanctioned! Email notice dispatched to'} ${loan.user_email}`
-      );
+      showToast('success', language === 'ta' ? 'கடன் ஒப்புதல் அளிக்கப்பட்டது.' : 'Loan sanctioned successfully.');
       await fetchAllData();
     } catch (err: any) {
       showToast('error', `Failed to sanction loan: ${err.message}`);
@@ -376,6 +362,9 @@ export const SuperAdminDashboard: React.FC = () => {
 
       {/* Navigation Tabs */}
       <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-2">
+        <button onClick={() => setActiveTab('home')} className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold ${activeTab === 'home' ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-emerald-50'}`}>
+          <Home className="h-4 w-4" />{language === 'ta' ? 'முகப்பு' : 'Home'}
+        </button>
         <button
           onClick={() => setActiveTab('pending')}
           className={`flex items-center space-x-2 px-4 py-2 text-xs font-bold rounded-xl transition-all ${
@@ -400,6 +389,10 @@ export const SuperAdminDashboard: React.FC = () => {
           <span>
             {t.loanSanctionTab} ({pendingSuperAdminLoans.length})
           </span>
+        </button>
+
+        <button onClick={() => setActiveTab('calculator')} className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold ${activeTab === 'calculator' ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-emerald-50'}`}>
+          <CreditCard className="h-4 w-4" />{t.loanCalculator}
         </button>
 
         <button
@@ -438,18 +431,32 @@ export const SuperAdminDashboard: React.FC = () => {
           <span>{t.broadcastTab}</span>
         </button>
 
-        <button
-          onClick={() => setActiveTab('emails')}
-          className={`flex items-center space-x-2 px-4 py-2 text-xs font-bold rounded-xl transition-all ${
-            activeTab === 'emails'
-              ? 'bg-emerald-600 text-white shadow-xs'
-              : 'text-slate-600 hover:text-emerald-800 hover:bg-emerald-50'
-          }`}
-        >
-          <Mail className="w-4 h-4" />
-          <span>{t.emailAuditTab} ({emails.length})</span>
+        <button onClick={() => setActiveTab('messages')} className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold ${activeTab === 'messages' ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-emerald-50'}`}>
+          <Send className="h-4 w-4" />{language === 'ta' ? 'நிர்வாக செய்திகள்' : 'Admin messages'}
         </button>
       </div>
+
+      {activeTab === 'home' && (
+        <section className="grid gap-4 md:grid-cols-3">
+          <article className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
+            <p className="text-xs font-semibold text-amber-800">{language === 'ta' ? 'நிலுவை பதிவுகள்' : 'Pending registrations'}</p>
+            <p className="mt-2 text-2xl font-extrabold text-amber-950">{pendingUsers.length}</p>
+            <button onClick={() => setActiveTab('pending')} className="mt-3 text-xs font-bold text-amber-900 hover:underline">{language === 'ta' ? 'பதிவுகளை மதிப்பாய்வு செய்' : 'Review registrations'}</button>
+          </article>
+          <article className="rounded-2xl border border-sky-200 bg-sky-50 p-5">
+            <p className="text-xs font-semibold text-sky-800">{language === 'ta' ? 'இறுதி ஒப்புதலுக்கான கடன்கள்' : 'Loans awaiting final review'}</p>
+            <p className="mt-2 text-2xl font-extrabold text-sky-950">{pendingSuperAdminLoans.length}</p>
+            <button onClick={() => setActiveTab('loans')} className="mt-3 text-xs font-bold text-sky-900 hover:underline">{language === 'ta' ? 'கடன் பகுதியைத் திற' : 'Open loan review'}</button>
+          </article>
+          <article className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
+            <p className="text-xs font-semibold text-emerald-800">{language === 'ta' ? 'குழுக்கள்' : 'Groups'}</p>
+            <p className="mt-2 text-2xl font-extrabold text-emerald-950">{groups.length}</p>
+            <button onClick={() => setActiveTab('groups')} className="mt-3 text-xs font-bold text-emerald-900 hover:underline">{language === 'ta' ? 'குழுக்களை நிர்வகி' : 'Manage groups'}</button>
+          </article>
+        </section>
+      )}
+      {activeTab === 'messages' && user && <AdminMessageCenter user={user} />}
+      {activeTab === 'calculator' && <LoanEmiCalculator />}
 
       {/* TAB 1: PENDING REGISTRATIONS */}
       {activeTab === 'pending' && (
@@ -551,7 +558,7 @@ export const SuperAdminDashboard: React.FC = () => {
               <p className="text-xs text-slate-500">
                 {language === 'ta'
                   ? 'கடன்கள் ₹10,000 வரை வரம்பிடப்பட்டது. முதன்மை நிர்வாகியின் இறுதி ஒப்புதல் தானியங்கி மின்னஞ்சலை உடனடியாக அனுப்பும்.'
-                  : 'Loans capped at ₹10,000. Super Admin final sanction automatically triggers real notification email.'}
+                  : 'Loans are reviewed by the Group Admin before final Super Admin sanction.'}
               </p>
             </div>
 
@@ -699,7 +706,7 @@ export const SuperAdminDashboard: React.FC = () => {
                           <span>
                             {actionLoading === loan.id
                               ? t.sanctioningAction
-                              : t.confirmSanctionAndSendEmail}
+                              : t.confirmSanction}
                           </span>
                         </button>
 
@@ -808,6 +815,7 @@ export const SuperAdminDashboard: React.FC = () => {
                 <option value="APPROVED">{language === 'ta' ? 'அங்கீகரிக்கப்பட்டது' : 'Approved'}</option>
                 <option value="PENDING">{language === 'ta' ? 'நிலுவையில்' : 'Pending'}</option>
                 <option value="REJECTED">{language === 'ta' ? 'நிராகரிக்கப்பட்டது' : 'Rejected'}</option>
+                <option value="REMOVED">{language === 'ta' ? 'நீக்கப்பட்டது' : 'Removed (history retained)'}</option>
               </select>
             </div>
           </div>
@@ -879,6 +887,26 @@ export const SuperAdminDashboard: React.FC = () => {
                           className="text-[11px] text-emerald-700 hover:text-emerald-900 font-bold underline ml-2"
                         >
                           {u.role === 'GROUP_ADMIN' ? (language === 'ta' ? 'உறுப்பினராக்கு' : 'Make Member') : (language === 'ta' ? 'தலைவியாக நியமி' : 'Designate Group Admin')}
+                        </button>
+                      )}
+                      {u.role !== 'SUPER_ADMIN' && u.status === 'APPROVED' && (
+                        <button
+                          onClick={async () => {
+                            const confirmed = window.confirm(language === 'ta'
+                              ? `${u.name} கணக்கின் செயலில் உள்ள அணுகலை நீக்கவா? நிதி பதிவுகள் பாதுகாக்கப்படும்.`
+                              : `Remove ${u.name}'s active access? Their loan and financial history will be retained.`);
+                            if (!confirmed) return;
+                            try {
+                              const result = await api.removeUser(u.id);
+                              showToast('success', result.message);
+                              await fetchAllData();
+                            } catch (requestError) {
+                              showToast('error', requestError instanceof Error ? requestError.message : 'Could not remove user.');
+                            }
+                          }}
+                          className="ml-2 text-[11px] font-bold text-rose-700 underline hover:text-rose-900"
+                        >
+                          {language === 'ta' ? 'அணுகலை நீக்கு' : 'Remove access'}
                         </button>
                       )}
                     </td>
@@ -1046,194 +1074,6 @@ export const SuperAdminDashboard: React.FC = () => {
 
           <div className="md:col-span-2">
             <AnnouncementsFeed />
-          </div>
-        </div>
-      )}
-
-      {/* TAB 6: EMAIL DISPATCH AUDIT LOG */}
-      {activeTab === 'emails' && (
-        <div className="space-y-4">
-          {/* Email Delivery Banner */}
-          <div className={`p-5 rounded-2xl border ${
-            smtpStatus?.active_mode === 'REAL_SMTP'
-              ? 'bg-emerald-50/80 border-emerald-200'
-              : 'bg-amber-50/80 border-amber-200'
-          }`}>
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div className="flex items-start space-x-3.5">
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
-                  smtpStatus?.active_mode === 'REAL_SMTP'
-                    ? 'bg-emerald-100 border-emerald-300 text-emerald-800'
-                    : 'bg-amber-100 border-amber-300 text-amber-800'
-                }`}>
-                  {smtpStatus?.active_mode === 'REAL_SMTP' ? (
-                    <ShieldCheck className="w-5 h-5 text-emerald-700" />
-                  ) : (
-                    <AlertTriangle className="w-5 h-5 text-amber-700" />
-                  )}
-                </div>
-                <div>
-                  <div className="flex items-center space-x-2">
-                    <h3 className="text-sm font-bold text-slate-900">
-                      {smtpStatus?.active_mode === 'REAL_SMTP' ? t.liveSmtpActive : t.sandboxActive}
-                    </h3>
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                      smtpStatus?.active_mode === 'REAL_SMTP'
-                        ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                        : 'bg-amber-100 text-amber-800 border-amber-300'
-                    }`}>
-                      {smtpStatus?.active_mode === 'REAL_SMTP' ? 'LIVE SMTP' : 'SANDBOX'}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-600 mt-1 max-w-2xl leading-relaxed">
-                    {smtpStatus?.active_mode === 'REAL_SMTP'
-                      ? (language === 'ta'
-                          ? `அனைத்து கடன் ஒப்புதல் அறிவிப்புகளும் ${smtpStatus?.active_transport?.user || 'ஜிமெயில்'} வழியாக உறுப்பினர்களின் உண்மையான இன்பாக்ஸுக்கு உடனடியாக அனுப்பப்படுகின்றன.`
-                          : `All loan sanction approvals automatically deliver real emails to registered member inboxes via ${smtpStatus?.active_transport?.user || 'SMTP relay'}.`)
-                      : (language === 'ta'
-                          ? `ஏன் ஜிமெயிலில் மின்னஞ்சல் வரவில்லை? சாண்ட்பாக்ஸ் முறையில், நிஜ சான்றுகள் இன்றி சோதிக்க மின்னஞ்சல்கள் தற்காலிக மெய்நிகர் பெட்டியில் வைக்கப்படுகின்றன. sherasanjayn@gmail.com-ல் உண்மையான மின்னஞ்சல் பெற Google App Password கட்டமைக்கவும்.`
-                          : `Why didn't my Gmail receive the email? In test sandbox mode, emails are captured safely inside a virtual mailbox so you can test without passwords. To receive real emails in sherasanjayn@gmail.com, configure a Google App Password below.`)}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center space-x-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setIsConfigModalOpen(true)}
-                  className={`px-3.5 py-2 rounded-xl text-xs font-bold inline-flex items-center space-x-1.5 shadow-xs transition-colors ${
-                    smtpStatus?.active_mode === 'REAL_SMTP'
-                      ? 'bg-white hover:bg-slate-50 text-slate-800 border border-slate-300'
-                      : 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                  }`}
-                >
-                  <Settings className="w-3.5 h-3.5" />
-                  <span>{t.configureSmtpBtn}</span>
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Audit Records List Card */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 shadow-xs">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <h2 className="text-base font-bold text-slate-900 flex items-center">
-                  <Mail className="w-4 h-4 text-emerald-600 mr-2" />
-                  {t.emailAuditLog}
-                </h2>
-                <p className="text-xs text-slate-500">
-                  {language === 'ta'
-                    ? 'அனைத்து கடன் ஒப்புதல் மின்னஞ்சல்களின் அதிகாரப்பூர்வ தணிக்கை பதிவு.'
-                    : 'Audited records of all loan sanction emails dispatched via automated notification system.'}
-                </p>
-              </div>
-
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={() => setIsConfigModalOpen(true)}
-                  className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 text-xs font-bold rounded-xl inline-flex items-center space-x-1.5"
-                >
-                  <Settings className="w-3.5 h-3.5 text-slate-500" />
-                  <span>{language === 'ta' ? 'SMTP அமைப்புகள்' : 'SMTP Settings'}</span>
-                </button>
-
-                <button
-                  onClick={async () => {
-                    try {
-                      const res = await api.sendTestEmail({
-                        to: user?.email || 'sherasanjayn@gmail.com',
-                        userName: user?.name || 'Super Admin',
-                        amount: 5000,
-                      });
-                      showToast(
-                        'success',
-                        res.delivery_mode === 'REAL_SMTP'
-                          ? (language === 'ta' ? 'உண்மை கடன் ஒப்புதல் மின்னஞ்சல் அனுப்பப்பட்டது!' : `Real sanction email dispatched to ${user?.email || 'sherasanjayn@gmail.com'}!`)
-                          : (language === 'ta' ? 'மாதிரி மின்னஞ்சல் சாண்ட்பாக்ஸில் பதிவானது (ஜிமெயிலில் பெற SMTP அமைக்கவும்)' : 'Test email dispatched to virtual sandbox. Configure SMTP for real Gmail delivery.')
-                      );
-                      await fetchAllData();
-                    } catch (e: any) {
-                      showToast('error', e.message);
-                    }
-                  }}
-                  className="px-3.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 text-xs font-bold rounded-xl inline-flex items-center space-x-1.5"
-                >
-                  <Mail className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>{t.testEmailBtn}</span>
-                </button>
-              </div>
-            </div>
-
-            {emails.length === 0 ? (
-              <div className="p-8 text-center text-slate-400 text-xs border border-slate-200 rounded-xl">
-                {language === 'ta' ? 'இன்னும் கடன் ஒப்புதல் மின்னஞ்சல்கள் எதுவும் அனுப்பப்படவில்லை.' : 'No loan sanction emails dispatched yet.'}
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {emails.map((log) => {
-                  const isReal = log.delivery_mode === 'REAL_SMTP';
-                  return (
-                    <div
-                      key={log.id}
-                      className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5 text-xs hover:border-slate-300 transition-colors"
-                    >
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-bold text-slate-900 font-mono">To: {log.to}</span>
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                              isReal
-                                ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
-                                : 'bg-amber-100 text-amber-900 border-amber-300'
-                            }`}
-                          >
-                            {isReal ? t.realInboxDelivered : t.sandboxCaptured}
-                          </span>
-                        </div>
-                        <span className="text-slate-500 text-[11px]">
-                          {new Date(log.sent_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
-                        </span>
-                      </div>
-
-                      <div className="text-slate-900 font-semibold text-xs">
-                        Subject: <span className="text-emerald-900 font-bold">"{log.subject}"</span>
-                      </div>
-
-                      <div className="p-3 bg-white rounded-lg border border-slate-200 text-slate-700 font-mono text-[11px] leading-relaxed">
-                        {log.body}
-                      </div>
-
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between text-[11px] text-slate-500 pt-1 gap-2">
-                        <span className="truncate max-w-md">{log.info}</span>
-                        <div className="flex items-center space-x-2 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => setViewingEmail(log)}
-                            className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-300 text-slate-800 rounded-lg font-bold inline-flex items-center space-x-1 transition-colors"
-                          >
-                            <Eye className="w-3 h-3 text-emerald-600" />
-                            <span>{t.viewRenderedEmail}</span>
-                          </button>
-
-                          {log.preview_url && (
-                            <a
-                              href={log.preview_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 rounded-lg font-bold inline-flex items-center space-x-1 transition-colors"
-                            >
-                              <span>{t.viewLivePreview}</span>
-                              <ExternalLink className="w-3 h-3" />
-                            </a>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
           </div>
         </div>
       )}
@@ -1481,20 +1321,6 @@ export const SuperAdminDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Email Configuration Modal */}
-      <EmailConfigModal
-        isOpen={isConfigModalOpen}
-        onClose={() => setIsConfigModalOpen(false)}
-        onSaved={fetchAllData}
-        smtpStatus={smtpStatus}
-      />
-
-      {/* Email Rendered Message Viewer Modal */}
-      <EmailViewerModal
-        isOpen={Boolean(viewingEmail)}
-        onClose={() => setViewingEmail(null)}
-        email={viewingEmail}
-      />
     </div>
   );
 };

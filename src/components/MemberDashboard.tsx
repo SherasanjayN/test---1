@@ -11,6 +11,7 @@ import { EmergencySosModal } from './EmergencySosModal';
 import { RepaymentLedger } from './RepaymentLedger';
 import { VoiceInputModal } from './VoiceInputModal';
 import { AiTechExplanationModal } from './AiTechExplanationModal';
+import { InvestmentPortal } from './InvestmentPortal';
 import { generateLoanSanctionPdf } from '../utils/pdfGenerator';
 import {
   CreditCard,
@@ -36,13 +37,16 @@ import {
   Download,
   ChevronDown,
   ChevronUp,
+  Home,
+  TrendingUp,
 } from 'lucide-react';
 
 export const MemberDashboard: React.FC = () => {
   const { user, group } = useAuth();
   const { t, language } = useLanguage();
 
-  const [activeTab, setActiveTab] = useState<'loans' | 'calculator' | 'chat' | 'announcements' | 'members'>('loans');
+  const [activeTab, setActiveTab] = useState<'home' | 'loans' | 'investment' | 'chat' | 'announcements' | 'members'>('home');
+  const [showLoanCalculator, setShowLoanCalculator] = useState(false);
   const [loans, setLoans] = useState<Loan[]>([]);
   const [groupMembers, setGroupMembers] = useState<User[]>([]);
   const [loadingLoans, setLoadingLoans] = useState(false);
@@ -200,7 +204,7 @@ export const MemberDashboard: React.FC = () => {
               <span>{t.emergencySos}</span>
             </button>
 
-            <button
+            {activeTab === 'loans' && <button
               onClick={() => {
                 setShowApplyModal(true);
                 setFormError(null);
@@ -210,13 +214,21 @@ export const MemberDashboard: React.FC = () => {
             >
               <PlusCircle className="w-4 h-4" />
               <span>{t.applyLoan}</span>
-            </button>
+            </button>}
           </div>
         </div>
       </div>
 
       {/* Tabs */}
       <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-2">
+        <button
+          onClick={() => setActiveTab('home')}
+          className={`flex items-center space-x-2 px-4 py-2 text-xs font-bold rounded-xl transition-all ${activeTab === 'home' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-600 hover:text-emerald-800 hover:bg-emerald-50'}`}
+        >
+          <Home className="w-4 h-4" />
+          <span>{language === 'ta' ? 'முகப்பு' : 'Home'}</span>
+        </button>
+
         <button
           onClick={() => setActiveTab('loans')}
           className={`flex items-center space-x-2 px-4 py-2 text-xs font-bold rounded-xl transition-all ${
@@ -230,15 +242,15 @@ export const MemberDashboard: React.FC = () => {
         </button>
 
         <button
-          onClick={() => setActiveTab('calculator')}
+          onClick={() => setActiveTab('investment')}
           className={`flex items-center space-x-2 px-4 py-2 text-xs font-bold rounded-xl transition-all ${
-            activeTab === 'calculator'
+            activeTab === 'investment'
               ? 'bg-emerald-600 text-white shadow-xs'
               : 'text-slate-600 hover:text-emerald-800 hover:bg-emerald-50'
           }`}
         >
-          <Calculator className="w-4 h-4" />
-          <span>{t.loanCalculator}</span>
+          <TrendingUp className="w-4 h-4" />
+          <span>{language === 'ta' ? 'எனது முதலீடு' : 'My Investment'}</span>
         </button>
 
         <button
@@ -278,8 +290,39 @@ export const MemberDashboard: React.FC = () => {
         </button>
       </div>
 
-      {/* Tab 1: My Loans & Timeline */}
+      {activeTab === 'home' && (
+        <section className="grid gap-4 md:grid-cols-3">
+          <article className="rounded-2xl border border-slate-200 bg-white p-5">
+            <p className="text-xs font-semibold text-slate-500">{language === 'ta' ? 'எனது கடன் விண்ணப்பங்கள்' : 'My loan applications'}</p>
+            <p className="mt-2 text-2xl font-extrabold text-slate-900">{loans.length}</p>
+            <button onClick={() => setActiveTab('loans')} className="mt-3 text-xs font-bold text-emerald-700 hover:underline">{language === 'ta' ? 'கடன் பகுதியைத் திற' : 'Open loans'}</button>
+          </article>
+          <article className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
+            <p className="text-xs font-semibold text-emerald-800">{language === 'ta' ? 'குழு உறுப்பினர்கள்' : 'Group members'}</p>
+            <p className="mt-2 text-2xl font-extrabold text-emerald-900">{groupMembers.length}</p>
+            <button onClick={() => setActiveTab('members')} className="mt-3 text-xs font-bold text-emerald-800 hover:underline">{language === 'ta' ? 'உறுப்பினர்களைப் பார்க்க' : 'View members'}</button>
+          </article>
+          <article className="rounded-2xl border border-slate-200 bg-white p-5">
+            <p className="text-xs font-semibold text-slate-500">{language === 'ta' ? 'தனிப்பட்ட சேமிப்பு' : 'Private savings'}</p>
+            <p className="mt-2 text-sm text-slate-600">{language === 'ta' ? 'உண்மையான பங்களிப்புகளைப் பாதுகாப்பாக பதிவு செய்யுங்கள்.' : 'Track actual contributions privately.'}</p>
+            <button onClick={() => setActiveTab('investment')} className="mt-3 text-xs font-bold text-emerald-700 hover:underline">{language === 'ta' ? 'முதலீட்டைப் பார்க்க' : 'Open investment'}</button>
+          </article>
+        </section>
+      )}
+
       {activeTab === 'loans' && (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs text-slate-500">{language === 'ta' ? 'கடன் விண்ணப்பங்கள் மற்றும் திருப்பிச் செலுத்துதல்களை நிர்வகிக்கவும்.' : 'Manage loan applications and repayment history.'}</p>
+          <button type="button" onClick={() => setShowLoanCalculator(current => !current)} className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-emerald-800 hover:bg-emerald-50">
+            {showLoanCalculator ? (language === 'ta' ? 'கடன் வரலாற்றுக்குத் திரும்பு' : 'Back to loan history') : t.loanCalculator}
+          </button>
+        </div>
+      )}
+
+      {activeTab === 'loans' && showLoanCalculator && <LoanEmiCalculator onSelectPlan={handleSelectEmiPlan} />}
+
+      {/* Tab 1: My Loans & Timeline */}
+      {activeTab === 'loans' && !showLoanCalculator && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-bold text-slate-900 flex items-center">
@@ -429,10 +472,7 @@ export const MemberDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Tab 2: EMI Calculator */}
-      {activeTab === 'calculator' && (
-        <LoanEmiCalculator onSelectPlan={handleSelectEmiPlan} />
-      )}
+      {activeTab === 'investment' && <InvestmentPortal />}
 
       {/* Tab 3: Group Chat */}
       {activeTab === 'chat' && group && (

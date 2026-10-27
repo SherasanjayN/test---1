@@ -67,6 +67,10 @@ router.post('/login', async (req, res) => {
       res.status(401).json({ error: 'Invalid email or password.' });
       return;
     }
+    if (user.status === 'REMOVED') {
+      res.status(403).json({ error: 'This account has been removed and cannot access the application.' });
+      return;
+    }
 
     const passwordMatch = bcrypt.compareSync(password, user.password_hash);
     if (!passwordMatch) {

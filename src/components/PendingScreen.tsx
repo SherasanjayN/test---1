@@ -23,13 +23,15 @@ export const PendingScreen: React.FC = () => {
   };
 
   const isRejected = user?.status === 'REJECTED';
+  const isRemoved = user?.status === 'REMOVED';
+  const isInactive = isRejected || isRemoved;
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <div className="bg-white py-8 px-6 sm:px-8 shadow-lg rounded-2xl border border-slate-200 text-center">
           <div className="flex justify-center mb-4">
-            {isRejected ? (
+            {isInactive ? (
               <div className="w-16 h-16 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center border border-rose-300">
                 <ShieldAlert className="w-8 h-8" />
               </div>
@@ -41,10 +43,14 @@ export const PendingScreen: React.FC = () => {
           </div>
 
           <h2 className="text-xl font-bold text-slate-900">
-            {isRejected ? t.rejectedScreenTitle : t.pendingScreenTitle}
+            {isRemoved
+              ? (language === 'ta' ? 'கணக்கு அணுகல் நீக்கப்பட்டது' : 'Account access removed')
+              : isRejected ? t.rejectedScreenTitle : t.pendingScreenTitle}
           </h2>
           <p className="text-xs text-slate-600 mt-1">
-            {isRejected ? t.rejectedScreenSubtitle : t.pendingScreenSubtitle}
+            {isRemoved
+              ? (language === 'ta' ? 'உங்கள் செயலில் உள்ள அணுகல் நீக்கப்பட்டுள்ளது. உதவி தேவைப்பட்டால் நிர்வாகியைத் தொடர்பு கொள்ளவும்.' : 'Your active access has been removed. Contact an administrator if you need assistance.')
+              : isRejected ? t.rejectedScreenSubtitle : t.pendingScreenSubtitle}
           </p>
 
           <div className="my-6 p-4 rounded-xl bg-slate-50 border border-slate-200 text-left space-y-2.5 text-xs">
@@ -78,7 +84,7 @@ export const PendingScreen: React.FC = () => {
             </div>
           </div>
 
-          {!isRejected && (
+          {!isInactive && (
             <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 text-left mb-6 space-y-1">
               <div className="font-bold flex items-center text-emerald-800">
                 <CheckCircle2 className="w-4 h-4 mr-1 text-emerald-600" />
@@ -97,7 +103,7 @@ export const PendingScreen: React.FC = () => {
           )}
 
           <div className="flex flex-col sm:flex-row gap-3">
-            {!isRejected && (
+            {!isInactive && (
               <button
                 type="button"
                 onClick={handleRefresh}
